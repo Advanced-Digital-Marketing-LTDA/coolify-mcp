@@ -27,7 +27,9 @@ describe("activation and server pin", () => {
     expect(isActivated({ ownerSubject: "owner", targetServerUuid: "server-target" })).toBe(false);
     expect(isActivated(active)).toBe(true);
     expect(isActivated({ ...active, ownerSubject: "owner@example.test" })).toBe(false);
+    expect(isActivated({ ...active, ownerSubject: "   " })).toBe(false);
     expect(isActivated({ ...active, targetServerUuid: " " })).toBe(false);
+    expect(isActivated({ ...active, targetServerName: "   " })).toBe(false);
     expect(isActivated({ ...active, apiToken: " " })).toBe(false);
     expect(isActivated({ ...active, origin: "https://coolify.example.invalid" })).toBe(false);
     expect(isSafeCoolifyOrigin("http://coolify.example.test")).toBe(false);
@@ -35,8 +37,21 @@ describe("activation and server pin", () => {
     expect(isSafeCoolifyOrigin("https://coolify.example.test/arbitrary/path")).toBe(false);
     expect(isSafeCoolifyOrigin("https://coolify.example.test/?x=1")).toBe(false);
     expect(isSafeCoolifyOrigin("https://coolify.example.test:8443")).toBe(false);
+    expect(isSafeCoolifyOrigin("not-a-url")).toBe(false);
     expect(readRuntimeConfig({})).toEqual({});
-    expect(readRuntimeConfig({ COOLIFY_ORIGIN: "https://coolify.example.test", COOLIFY_TARGET_SERVER_NAME: "Target Server" })).toEqual({ origin: "https://coolify.example.test", targetServerName: "Target Server" });
+    expect(readRuntimeConfig({
+      COOLIFY_ORIGIN: "https://coolify.example.test",
+      COOLIFY_TARGET_SERVER_NAME: " Target Server ",
+      COOLIFY_OWNER_SUBJECT: "owner-subject",
+      COOLIFY_TARGET_SERVER_UUID: "server-target",
+      COOLIFY_API_TOKEN: "synthetic-token",
+    })).toEqual({
+      origin: "https://coolify.example.test",
+      targetServerName: "Target Server",
+      ownerSubject: "owner-subject",
+      targetServerUuid: "server-target",
+      apiToken: "synthetic-token",
+    });
   });
   it("requires the pinned UUID to resolve uniquely to the configured server name", async () => {
     const provider = new FakeCoolify();
