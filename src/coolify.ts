@@ -61,7 +61,7 @@ export interface CoolifyProvider {
   getEnvironments(
     projectUuid: string,
     serverUuid: string,
-    knownTargetResources?: Readonly<Partial<Record<"application" | "service", readonly ApiRecord[]>>>,
+    knownTargetResources?: Readonly<Record<"application" | "service", readonly ApiRecord[]>>,
   ): Promise<ApiRecord[]>;
   listServerResources(serverUuid: string): Promise<ApiRecord[]>;
   listDeployments(applicationUuid: string): Promise<ApiRecord[]>;
@@ -160,7 +160,7 @@ export class CoolifyMcpProvider implements CoolifyProvider {
   async getEnvironments(
     projectUuid: string,
     serverUuid: string,
-    knownTargetResources?: Readonly<Partial<Record<"application" | "service", readonly ApiRecord[]>>>,
+    knownTargetResources?: Readonly<Record<"application" | "service", readonly ApiRecord[]>>,
   ): Promise<ApiRecord[]> {
     const project = await this.getResource("project", projectUuid);
     if (!Array.isArray(project.environments)) throw new Error("Unexpected Coolify MCP project response shape");
@@ -231,7 +231,14 @@ export class CoolifyMcpProvider implements CoolifyProvider {
       resource: [kind],
     });
     const result = await this.call("control", args);
-    return asRecord(result);
+    const response = asRecord(result);
+    if (response.ok !== true || response.resource !== kind || response.uuid !== uuid || response.action !== "restart") {
+      throw new Error("Coolify restart response did not confirm the requested resource action");
+    }
+    if (kind === "application" && (typeof response.deployment_uuid !== "string" || response.deployment_uuid.length === 0)) {
+      throw new Error("Coolify did not queue the application restart");
+    }
+    return response;
   }
 
   private async listAll(tool: string, filters: Record<string, unknown> = {}): Promise<ApiRecord[]> {

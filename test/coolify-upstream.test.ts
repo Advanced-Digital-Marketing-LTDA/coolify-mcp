@@ -215,6 +215,10 @@ describe("Coolify MCP upstream adapter", () => {
 
   it("does not request force, preview, stop, cancel, secret, or arbitrary operations", async () => {
     const upstream = new MockCoolifyTools();
+    upstream.callTool = async (name, args) => {
+      upstream.calls.push({ name, args });
+      return { structuredContent: { data: { ok: true, resource: args.resource, uuid: args.uuid, action: args.action } } };
+    };
     const provider = new CoolifyMcpProvider(upstream);
     await provider.deploy("app-synthetic");
     await provider.restart("service", "service-synthetic");
@@ -222,6 +226,28 @@ describe("Coolify MCP upstream adapter", () => {
       { name: "deploy", args: { uuid: "app-synthetic" } },
       { name: "control", args: { uuid: "service-synthetic", action: "restart", resource: "service" } },
     ]);
+  });
+
+  it("does not report an application restart as queued when Coolify skips it", async () => {
+    const upstream = new MockCoolifyTools();
+    upstream.callTool = async (name, args) => {
+      upstream.calls.push({ name, args });
+      return { structuredContent: { data: { ok: true, resource: "application", uuid: "app-synthetic", action: "restart", deployment_uuid: "deployment-synthetic" } } };
+    };
+    const provider = new CoolifyMcpProvider(upstream);
+    await expect(provider.restart("application", "app-synthetic")).resolves.toMatchObject({ deployment_uuid: "deployment-synthetic" });
+    upstream.callTool = async (name, args) => {
+      upstream.calls.push({ name, args });
+      return { structuredContent: { data: {
+        ok: true,
+        resource: "application",
+        uuid: "app-synthetic",
+        action: "restart",
+        message: "Deployment skipped because the queue is full.",
+        deployment_uuid: null,
+      } } };
+    };
+    await expect(provider.restart("application", "app-synthetic")).rejects.toThrow("did not queue the application restart");
   });
 
   it("fails closed if an upstream tool disappears or its published schema changes", async () => {
