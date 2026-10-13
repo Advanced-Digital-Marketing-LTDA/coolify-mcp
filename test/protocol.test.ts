@@ -164,6 +164,7 @@ describe("published MCP protocol and schemas", () => {
       expect(provider.writes).toEqual(["deploy:app-alpha"]);
       expect(elicitationRequests[0]?.params).toMatchObject({
         mode: "form",
+        message: "Confirm deploy for Alpha (app-alpha). Type exactly: DEPLOY Alpha (app-alpha)",
         requestedSchema: { type: "object", required: ["confirmation"], properties: { confirmation: { type: "string" } } },
       });
       const denied = await client.callTool({ name: "coolify_restart_resource", arguments: { kind: "application", uuid: "app-alpha", confirmed: true } as never });
