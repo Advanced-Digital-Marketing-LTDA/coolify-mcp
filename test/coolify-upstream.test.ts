@@ -151,8 +151,35 @@ describe("Coolify MCP upstream adapter", () => {
       { uuid: "env-database", name: "database env", server_uuid: "server-target" },
     ]);
     const listCalls = upstream.calls.filter(({ name }) => name.startsWith("list_"));
-    expect(listCalls).toHaveLength(9);
+    expect(listCalls).toHaveLength(6);
     expect(listCalls.every(({ args }) => args.server_uuid === "server-target" && typeof args.environment_uuid === "string" && args.page === 1 && args.per_page === PAGE_SIZE)).toBe(true);
+  });
+
+  it("reuses complete target application and service lists and only probes databases for unresolved environments", async () => {
+    const upstream = new MockCoolifyTools();
+    upstream.callTool = async (name, args) => {
+      upstream.calls.push({ name, args });
+      if (name === "get_project") return { structuredContent: { data: { uuid: "project-a", environments: [
+        { uuid: "env-app", name: "app" },
+        { uuid: "env-database", name: "database" },
+        { uuid: "env-empty", name: "empty" },
+      ] } } };
+      const rows = name === "list_databases" && args.environment_uuid === "env-database" ? [{ uuid: "db-a" }] : [];
+      return { structuredContent: { data: rows, _pagination: { page: 1, per_page: PAGE_SIZE, total: rows.length, total_pages: 1 } } };
+    };
+    const provider = new CoolifyMcpProvider(upstream);
+    const environments = await provider.getEnvironments("project-a", "server-target", {
+      application: [{ uuid: "app-a", project_uuid: "project-a", environment_uuid: "env-app" }],
+      service: [],
+    });
+    expect(environments).toEqual([
+      { uuid: "env-app", name: "app", server_uuid: "server-target" },
+      { uuid: "env-database", name: "database", server_uuid: "server-target" },
+    ]);
+    expect(upstream.calls.filter(({ name }) => name.startsWith("list_"))).toEqual([
+      { name: "list_databases", args: { server_uuid: "server-target", environment_uuid: "env-database", page: 1, per_page: PAGE_SIZE } },
+      { name: "list_databases", args: { server_uuid: "server-target", environment_uuid: "env-empty", page: 1, per_page: PAGE_SIZE } },
+    ]);
   });
 
   it("lists all resources for a server to detect additional application destinations", async () => {

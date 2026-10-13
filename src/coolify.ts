@@ -58,7 +58,11 @@ export interface CoolifyProvider {
   listServers(): Promise<ApiRecord[]>;
   listResources(kind: ResourceKind, serverUuid?: string, environmentUuid?: string): Promise<ApiRecord[]>;
   getResource(kind: ResourceKind, uuid: string): Promise<ApiRecord>;
-  getEnvironments(projectUuid: string, serverUuid: string): Promise<ApiRecord[]>;
+  getEnvironments(
+    projectUuid: string,
+    serverUuid: string,
+    knownTargetResources?: Readonly<Partial<Record<"application" | "service", readonly ApiRecord[]>>>,
+  ): Promise<ApiRecord[]>;
   listServerResources(serverUuid: string): Promise<ApiRecord[]>;
   listDeployments(applicationUuid: string): Promise<ApiRecord[]>;
   listEnvironmentKeys(kind: Exclude<ResourceKind, "project">, uuid: string): Promise<ApiRecord[]>;
@@ -153,7 +157,11 @@ export class CoolifyMcpProvider implements CoolifyProvider {
     return asRecord(result);
   }
 
-  async getEnvironments(projectUuid: string, serverUuid: string): Promise<ApiRecord[]> {
+  async getEnvironments(
+    projectUuid: string,
+    serverUuid: string,
+    knownTargetResources?: Readonly<Partial<Record<"application" | "service", readonly ApiRecord[]>>>,
+  ): Promise<ApiRecord[]> {
     const project = await this.getResource("project", projectUuid);
     if (!Array.isArray(project.environments)) throw new Error("Unexpected Coolify MCP project response shape");
     const environments = project.environments.map(asRecord);
@@ -161,10 +169,20 @@ export class CoolifyMcpProvider implements CoolifyProvider {
     for (const environment of environments) {
       const uuid = uuidOfRecord(environment.uuid);
       if (!uuid) continue;
-      const lists = await Promise.all(([
-        "application", "database", "service",
-      ] as const).map((kind) => this.listResources(kind, serverUuid, uuid)));
-      if (lists.some((rows) => rows.length > 0)) scoped.push({ ...environment, server_uuid: serverUuid });
+      const alreadyKnown = knownTargetResources && (["application", "service"] as const).some((kind) =>
+        (knownTargetResources[kind] ?? []).some((resource) =>
+          resource.project_uuid === projectUuid && resource.environment_uuid === uuid));
+      if (alreadyKnown) {
+        scoped.push({ ...environment, server_uuid: serverUuid });
+        continue;
+      }
+      const kinds = knownTargetResources ? ["database"] as const : ["application", "database", "service"] as const;
+      for (const kind of kinds) {
+        if ((await this.listResources(kind, serverUuid, uuid)).length > 0) {
+          scoped.push({ ...environment, server_uuid: serverUuid });
+          break;
+        }
+      }
     }
     return scoped;
   }

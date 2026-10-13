@@ -53,6 +53,7 @@ describe("published MCP protocol and schemas", () => {
       expect(tools.get("coolify_restart_resource")?.inputSchema.properties).toEqual({ kind: expect.any(Object), uuid: expect.any(Object) });
       expect([...tools.keys()].some((name) => /delete|stop|cancel|force|tag|clone|preview|configuration_write/i.test(name))).toBe(false);
       expect(tools.get("coolify_inventory")?.outputSchema).toMatchObject({ properties: { server: expect.any(Object), resources: expect.any(Object), projects: expect.any(Object) } });
+      expect(tools.get("coolify_inventory")?.outputSchema.properties?.server).toMatchObject({ properties: { reachable: { type: ["boolean", "null"] }, usable: { type: ["boolean", "null"] } } });
       expect(tools.get("coolify_resource_status")?.outputSchema).toMatchObject({
         properties: {
           uuid: { type: "string" },
@@ -76,8 +77,9 @@ describe("published MCP protocol and schemas", () => {
     const { client, server } = await connect(provider);
     try {
       const result = await client.callTool({ name: "coolify_inventory", arguments: {} });
-      const data = result.structuredContent as { resources: Array<{ uuid: string }>; projects: Array<{ environments: Array<{ uuid: string }> }> };
+      const data = result.structuredContent as { server: { status: string | null; reachable: boolean | null; usable: boolean | null }; resources: Array<{ uuid: string }>; projects: Array<{ environments: Array<{ uuid: string }> }> };
       expect(data.resources.map((item) => item.uuid)).toEqual(["app-alpha", "db-alpha", "service-alpha"]);
+      expect(data.server).toEqual({ uuid: "server-target", name: "Target Server", status: "reachable", reachable: true, usable: true });
       expect(data.projects).toEqual([{ uuid: "project-web", name: "Website", environments: [{ uuid: "env-prod", name: "production" }] }]);
       expect(JSON.stringify(result)).not.toContain("db-outside");
       expect(JSON.stringify(result)).not.toContain("service-outside");

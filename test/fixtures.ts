@@ -1,8 +1,8 @@
 import type { ApiRecord, CoolifyProvider, ResourceKind } from "../src/coolify.js";
 import { serverUuidOf } from "../src/scope.js";
 
-export const targetServer: ApiRecord = { uuid: "server-target", name: "Target Server", status: "running" };
-export const otherServer: ApiRecord = { uuid: "server-elsewhere", name: "Other", status: "running" };
+export const targetServer: ApiRecord = { uuid: "server-target", name: "Target Server", is_reachable: true, is_usable: true };
+export const otherServer: ApiRecord = { uuid: "server-elsewhere", name: "Other", is_reachable: true, is_usable: true };
 export const appTarget: ApiRecord = { uuid: "app-alpha", name: "Alpha", server: { uuid: "server-target" }, status: "running", fqdn: "alpha.example.test", project_uuid: "project-web", project_name: "Website", environment_uuid: "env-prod", environment_name: "production", secrets: "never-return" };
 export const databaseTarget: ApiRecord = { uuid: "db-alpha", name: "Main database", server: { uuid: "server-target" }, status: "running", project_uuid: "project-web", environment_uuid: "env-prod" };
 export const serviceTarget: ApiRecord = { uuid: "service-alpha", name: "Worker", server: { uuid: "server-target" }, status: "running", project_uuid: "project-web", environment_uuid: "env-prod" };

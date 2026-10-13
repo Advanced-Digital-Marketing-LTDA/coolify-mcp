@@ -58,7 +58,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     title: "List scoped resources",
     description: "List applications, databases, services, projects, and environments currently assigned to the configured pinned server.",
     inputSchema: z.strictObject({}),
-    outputSchema: z.object({ server: z.object({ uuid: z.string(), name: z.string(), status: z.string().nullable() }), resources: z.array(z.object({ uuid: z.string(), name: z.string(), kind: kindSchema, status: z.string().nullable(), serverUuid: z.string(), project: z.string().nullable(), environment: z.string().nullable(), fqdn: z.array(z.string()) })), projects: z.array(z.object({ uuid: z.string(), name: z.string(), environments: z.array(z.object({ uuid: z.string(), name: z.string() })) })) }),
+    outputSchema: z.object({ server: z.object({ uuid: z.string(), name: z.string(), status: z.string().nullable(), reachable: z.boolean().nullable(), usable: z.boolean().nullable() }), resources: z.array(z.object({ uuid: z.string(), name: z.string(), kind: kindSchema, status: z.string().nullable(), serverUuid: z.string(), project: z.string().nullable(), environment: z.string().nullable(), fqdn: z.array(z.string()) })), projects: z.array(z.object({ uuid: z.string(), name: z.string(), environments: z.array(z.object({ uuid: z.string(), name: z.string() })) })) }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, tool(async () => {
     const target = await requirePinnedServer(provider, config.targetServerUuid, config.targetServerName);
@@ -77,7 +77,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     for (const project of projects) {
       const uuid = uuidOf(project);
       if (!uuid) continue;
-      const envs = await provider.getEnvironments(uuid, config.targetServerUuid!);
+      const envs = await provider.getEnvironments(uuid, config.targetServerUuid!, { application: applications, service: services });
       const environments = envs
         .filter((environment) => serverUuidOf(environment) === config.targetServerUuid)
         .flatMap((environment) => {
@@ -89,7 +89,13 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
       }
     }
     return {
-      server: { uuid: config.targetServerUuid, name: config.targetServerName!, status: typeof target.status === "string" ? target.status : null },
+      server: {
+        uuid: config.targetServerUuid,
+        name: config.targetServerName!,
+        status: typeof target.is_reachable === "boolean" ? (target.is_reachable ? "reachable" : "unreachable") : null,
+        reachable: typeof target.is_reachable === "boolean" ? target.is_reachable : null,
+        usable: typeof target.is_usable === "boolean" ? target.is_usable : null,
+      },
       resources,
       projects: scopedProjects,
     };
