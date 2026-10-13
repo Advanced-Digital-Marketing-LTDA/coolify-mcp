@@ -221,7 +221,7 @@ export class CoolifyMcpProvider implements CoolifyProvider {
     const seen = new Set<string>();
     let args: Record<string, unknown> = { ...filters, page: 1, per_page: PAGE_SIZE };
     for (let count = 0; count < MAX_PAGES; count += 1) {
-      const result = await this.call(tool, args);
+      const result = await this.call(tool, args, true);
       const page = unpackPage(result);
       for (const item of page.items) {
         const key = typeof item.uuid === "string" ? item.uuid : JSON.stringify(item);
@@ -277,7 +277,7 @@ export class CoolifyMcpProvider implements CoolifyProvider {
     return args;
   }
 
-  private async call(name: string, args: Record<string, unknown>): Promise<unknown> {
+  private async call(name: string, args: Record<string, unknown>, preserveEnvelope = false): Promise<unknown> {
     const tool = await this.findTool(name);
     const properties = asRecord(tool.inputSchema.properties);
     const required = Array.isArray(tool.inputSchema.required) ? tool.inputSchema.required : [];
@@ -289,7 +289,10 @@ export class CoolifyMcpProvider implements CoolifyProvider {
     }
     const response = await this.client.callTool(name, args);
     if (response.isError) throw new Error("Coolify MCP tool returned an error");
-    return unwrapStructured(response.structuredContent);
+    const payload = response.structuredContent !== undefined
+      ? response.structuredContent
+      : parseTextJsonContent(response.content);
+    return preserveEnvelope ? payload : unwrapStructured(payload);
   }
 
   private async findTool(name: string): Promise<PublishedTool> {
@@ -344,6 +347,18 @@ function safePaginationArgs(args: Record<string, unknown>, currentPage: number, 
     throw new Error("Invalid Coolify pagination response");
   }
   return { page, per_page: perPage };
+}
+
+
+function parseTextJsonContent(content: readonly unknown[] | undefined): unknown {
+  if (!content || content.length !== 1) throw new Error("Unexpected Coolify MCP response shape");
+  const item = asRecord(content[0]);
+  if (item.type !== "text" || typeof item.text !== "string") throw new Error("Unexpected Coolify MCP response shape");
+  try {
+    return JSON.parse(item.text) as unknown;
+  } catch {
+    throw new Error("Unexpected Coolify MCP response shape");
+  }
 }
 
 function unwrapStructured(value: unknown): unknown {

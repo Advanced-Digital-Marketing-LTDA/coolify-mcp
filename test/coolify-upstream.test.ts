@@ -102,6 +102,25 @@ describe("Coolify MCP upstream adapter", () => {
     expect(upstream.calls[0]).toEqual({ name: "list_deployments", args: { application_uuid: "app-synthetic", page: 1, per_page: PAGE_SIZE } });
   });
 
+  it("parses Coolify's JSON text response and preserves list envelopes with or without pagination", async () => {
+    const upstream = new MockCoolifyTools();
+    upstream.callTool = async (name, args) => {
+      upstream.calls.push({ name, args });
+      return { content: [{ type: "text", text: JSON.stringify({ data: [{ uuid: "server-target", name: "Target Server" }] }) }] };
+    };
+    const provider = new CoolifyMcpProvider(upstream);
+    await expect(provider.listServers()).resolves.toEqual([{ uuid: "server-target", name: "Target Server" }]);
+
+    upstream.callTool = async (name, args) => {
+      upstream.calls.push({ name, args });
+      return { content: [{ type: "text", text: JSON.stringify({ data: { resource: args.resource, uuid: args.uuid, keys: [{ key: "PUBLIC_URL" }] } }) }] };
+    };
+    await expect(provider.listEnvironmentKeys("application", "app-synthetic")).resolves.toEqual([{ key: "PUBLIC_URL" }]);
+
+    upstream.callTool = async () => ({ content: [{ type: "text", text: "not-json" }] });
+    await expect(provider.listServers()).rejects.toThrow("response shape");
+  });
+
   it("returns environment key names from the upstream key-only tool", async () => {
     const upstream = new MockCoolifyTools();
     const provider = new CoolifyMcpProvider(upstream);
