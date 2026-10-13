@@ -180,7 +180,10 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     await requireSingleServerApplication(provider, applicationUuid, config.targetServerUuid!);
     if (!(await requestExactConfirmation(extra, "deploy", label(current), applicationUuid))) return { accepted: false, message: "Deployment was not confirmed" };
     await recheckBeforeWrite(provider, config.targetServerUuid, config.targetServerName, "application", applicationUuid);
-    await provider.deploy(applicationUuid);
+    const result = await provider.deploy(applicationUuid);
+    if (result.ok !== true || result.application_uuid !== applicationUuid || typeof result.deployment_uuid !== "string" || !result.deployment_uuid) {
+      return { accepted: false, message: "Coolify did not queue the deployment request" };
+    }
     return { accepted: true, message: "Deployment request accepted" };
   }));
 

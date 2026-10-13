@@ -24,6 +24,7 @@ export class FakeCoolify implements CoolifyProvider {
   };
   envs: ApiRecord[] = [{ key: "DATABASE_PASSWORD", value: "fixture-secret-value" }, { name: "PUBLIC_URL", value: "https://example.test" }];
   deployments: ApiRecord[] = [{ deployment_uuid: "deploy-1", application_uuid: "app-alpha", status: "finished", created_at: "2026-10-13T00:00:00Z", logs: "fixture-private-log" }, { deployment_uuid: "deploy-other", application_uuid: "app-outside", status: "finished", logs: "outside-log" }];
+  deployResult: ApiRecord | undefined;
   writes: string[] = [];
   resourceReads = 0;
   membershipReads = 0;
@@ -83,7 +84,11 @@ export class FakeCoolify implements CoolifyProvider {
   }
   async listDeployments() { this.check(); return this.deployments; }
   async listEnvironmentKeys() { this.check(); return this.envs; }
-  async deploy(uuid: string) { this.check(); this.writes.push(`deploy:${uuid}`); return { message: "queued", fixtureSecret: "must-not-return" }; }
+  async deploy(uuid: string) {
+    this.check();
+    this.writes.push(`deploy:${uuid}`);
+    return this.deployResult ?? { ok: true, application_uuid: uuid, deployment_uuid: "deployment-synthetic", message: "queued", fixtureSecret: "must-not-return" };
+  }
   async restart(kind: Exclude<ResourceKind, "project">, uuid: string) { this.check(); this.writes.push(`restart:${kind}:${uuid}`); return { message: "restarted", fixtureSecret: "must-not-return" }; }
 
   private check() { if (this.failWith) throw this.failWith; }
