@@ -2,11 +2,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { type RuntimeConfig, isActivated } from "./config.js";
-import { requestExactConfirmation } from "./confirmation.js";
+import { requestExactConfirmation, sanitizeConfirmationName } from "./confirmation.js";
 import { UnconfiguredCoolifyProvider, type ApiRecord, type CoolifyProvider, type ResourceKind } from "./coolify.js";
 import { AccessDeniedError, NotConfiguredError, publicError } from "./errors.js";
 import { OwnerIdentityGate, UnconfiguredIdentityProvider, type VerifiedIdentityProvider } from "./identity.js";
-import { safeDetails, safeResource, serverUuidOf, uuidOf, requirePinnedServer, requireResourceOnTarget } from "./scope.js";
+import { safeFilteredResource, safeVerifiedDetails, serverUuidOf, uuidOf, requirePinnedServer, requireResourceOnTarget, requireSingleServerApplication } from "./scope.js";
 
 const uuidSchema = z.string().min(1).max(128).regex(/^[a-zA-Z0-9-]+$/);
 const kindSchema = z.enum(["application", "database", "service", "project"]);
@@ -28,8 +28,8 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
       instructions: [
         "Coolify integration for the pinned owner only.",
         "Coolify origin and target server name are fixed deployment settings and are never caller-controlled.",
-        "All results are filtered to the pinned server after current membership checks.",
-        "Deploy and restart ask for exact interactive confirmation and recheck current scope before writing.",
+        "All resource lists use a server filter; resource details are returned only after current membership is verified.",
+        "Deploy and restart ask for exact interactive confirmation and recheck current server and application destinations before writing.",
         "Secret values, logs, arbitrary URLs, and shell execution are not exposed.",
       ].join(" "),
       capabilities: { tools: {} },
@@ -63,21 +63,21 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
   }, tool(async () => {
     const target = await requirePinnedServer(provider, config.targetServerUuid, config.targetServerName);
     const [applications, databases, services, projects] = await Promise.all([
-      provider.listResources("application"),
-      provider.listResources("database"),
-      provider.listResources("service"),
+      provider.listResources("application", config.targetServerUuid!),
+      provider.listResources("database", config.targetServerUuid!),
+      provider.listResources("service", config.targetServerUuid!),
       provider.listResources("project"),
     ]);
     const resources = [
-      ...applications.flatMap((item) => safeResource(item, "application", config.targetServerUuid! ) ?? []),
-      ...databases.flatMap((item) => safeResource(item, "database", config.targetServerUuid!) ?? []),
-      ...services.flatMap((item) => safeResource(item, "service", config.targetServerUuid!) ?? []),
+      ...applications.flatMap((item) => safeFilteredResource(item, "application", config.targetServerUuid!) ?? []),
+      ...databases.flatMap((item) => safeFilteredResource(item, "database", config.targetServerUuid!) ?? []),
+      ...services.flatMap((item) => safeFilteredResource(item, "service", config.targetServerUuid!) ?? []),
     ];
     const scopedProjects = [];
     for (const project of projects) {
       const uuid = uuidOf(project);
       if (!uuid) continue;
-      const envs = await provider.getEnvironments(uuid);
+      const envs = await provider.getEnvironments(uuid, config.targetServerUuid!);
       const environments = envs
         .filter((environment) => serverUuidOf(environment) === config.targetServerUuid)
         .flatMap((environment) => {
@@ -116,13 +116,13 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     if (kind === "project") {
       const project = await provider.getResource("project", uuid);
       if (uuidOf(project) !== uuid) throw new AccessDeniedError("Project not found");
-      const environments = await provider.getEnvironments(uuid);
+      const environments = await provider.getEnvironments(uuid, target);
       const inScope = environments.filter((environment) => serverUuidOf(environment) === target);
       if (!inScope.length) throw new AccessDeniedError("Project has no environment on the approved server");
       return { uuid, name: typeof project.name === "string" ? project.name : "Unnamed project", kind, environments: inScope.flatMap((env) => uuidOf(env) ? [{ uuid: uuidOf(env), name: typeof env.name === "string" ? env.name : "Unnamed environment" }] : []) };
     }
     const current = await requireResourceOnTarget(provider, kind, uuid, target);
-    return safeDetails(current, kind, target);
+    return safeVerifiedDetails(current, kind, target);
   }));
 
   server.registerTool("coolify_deployment_history", {
@@ -139,7 +139,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
       deployments: deployments
         .filter((item) => deploymentBelongsTo(item, applicationUuid))
         .map((item) => ({
-          uuid: stringValue(item.uuid),
+          uuid: stringValue(item.deployment_uuid) ?? stringValue(item.uuid),
           status: stringValue(item.status),
           createdAt: stringValue(item.created_at) ?? stringValue(item.createdAt),
           updatedAt: stringValue(item.updated_at) ?? stringValue(item.updatedAt),
@@ -171,6 +171,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, tool(async ({ applicationUuid }, extra) => {
     const current = await requireResourceOnTarget(provider, "application", applicationUuid, config.targetServerUuid!);
+    await requireSingleServerApplication(provider, applicationUuid, config.targetServerUuid!);
     if (!(await requestExactConfirmation(extra, "deploy", label(current), applicationUuid))) return { accepted: false, message: "Deployment was not confirmed" };
     await recheckBeforeWrite(provider, config.targetServerUuid, config.targetServerName, "application", applicationUuid);
     await provider.deploy(applicationUuid);
@@ -185,6 +186,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, tool(async ({ kind, uuid }, extra) => {
     const current = await requireResourceOnTarget(provider, kind, uuid, config.targetServerUuid!);
+    if (kind === "application") await requireSingleServerApplication(provider, uuid, config.targetServerUuid!);
     if (!(await requestExactConfirmation(extra, "restart", label(current), uuid))) return { accepted: false, message: "Restart was not confirmed" };
     await recheckBeforeWrite(provider, config.targetServerUuid, config.targetServerName, kind, uuid);
     await provider.restart(kind, uuid);
@@ -203,6 +205,7 @@ async function recheckBeforeWrite(
 ): Promise<void> {
   await requirePinnedServer(provider, targetUuid, targetName);
   await requireResourceOnTarget(provider, kind, uuid, targetUuid!);
+  if (kind === "application") await requireSingleServerApplication(provider, uuid, targetUuid!);
 }
 
 function deploymentBelongsTo(item: ApiRecord, applicationUuid: string): boolean {
@@ -214,5 +217,5 @@ function stringValue(value: unknown): string | null {
 }
 
 function label(item: ApiRecord): string {
-  return typeof item.name === "string" ? item.name.slice(0, 150) : "Unnamed resource";
+  return sanitizeConfirmationName(typeof item.name === "string" ? item.name : "Unnamed resource");
 }

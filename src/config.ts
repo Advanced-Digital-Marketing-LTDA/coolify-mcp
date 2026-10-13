@@ -13,9 +13,9 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   return Object.freeze({
     ...(isSafeCoolifyOrigin(env.COOLIFY_ORIGIN) ? { origin: new URL(env.COOLIFY_ORIGIN).origin } : {}),
     ...(env.COOLIFY_TARGET_SERVER_NAME?.trim() ? { targetServerName: env.COOLIFY_TARGET_SERVER_NAME.trim() } : {}),
-    ...(env.COOLIFY_OWNER_SUBJECT ? { ownerSubject: env.COOLIFY_OWNER_SUBJECT } : {}),
-    ...(env.COOLIFY_TARGET_SERVER_UUID ? { targetServerUuid: env.COOLIFY_TARGET_SERVER_UUID } : {}),
-    ...(env.COOLIFY_API_TOKEN ? { apiToken: env.COOLIFY_API_TOKEN } : {}),
+    ...(env.COOLIFY_OWNER_SUBJECT?.trim() ? { ownerSubject: env.COOLIFY_OWNER_SUBJECT.trim() } : {}),
+    ...(env.COOLIFY_TARGET_SERVER_UUID?.trim() ? { targetServerUuid: env.COOLIFY_TARGET_SERVER_UUID.trim() } : {}),
+    ...(env.COOLIFY_API_TOKEN?.trim() ? { apiToken: env.COOLIFY_API_TOKEN.trim() } : {}),
   });
 }
 

@@ -46,10 +46,27 @@ export function safeResource(value: ApiRecord, kind: ResourceKind, targetUuid: s
   };
 }
 
+/** Normalize a row returned by a required, explicit server_uuid-filtered list. */
+export function safeFilteredResource(value: ApiRecord, kind: Exclude<ResourceKind, "project">, targetUuid: string): SafeResource | undefined {
+  const observedServer = serverUuidOf(value);
+  if (observedServer !== undefined && observedServer !== targetUuid) return undefined;
+  if (!uuidOf(value)) return undefined;
+  return safeResource({ ...value, server_uuid: targetUuid }, kind, targetUuid);
+}
+
 export function safeDetails(value: ApiRecord, kind: ResourceKind, targetUuid: string): SafeResource {
   const normalized = safeResource(value, kind, targetUuid);
   if (!normalized) throw new ResourceScopeError("Resource is stale or outside the approved server scope");
   return normalized;
+}
+
+export function safeVerifiedDetails(value: ApiRecord, kind: Exclude<ResourceKind, "project">, targetUuid: string): SafeResource {
+  const observedServer = serverUuidOf(value);
+  if (observedServer !== undefined && observedServer !== targetUuid) {
+    throw new ResourceScopeError("Resource is stale or outside the approved server scope");
+  }
+  if (!uuidOf(value)) throw new ResourceScopeError("Resource is stale or outside the approved server scope");
+  return safeDetails({ ...value, server_uuid: targetUuid }, kind, targetUuid);
 }
 
 function safeString(value: unknown): string | undefined {
@@ -57,7 +74,7 @@ function safeString(value: unknown): string | undefined {
 }
 
 export async function requirePinnedServer(provider: CoolifyProvider, targetUuid: string | undefined, targetName: string | undefined): Promise<ApiRecord> {
-  if (!targetUuid?.trim()) throw new ResourceScopeError("Target server UUID is not configured");
+  if (!targetUuid?.trim() || targetUuid !== targetUuid.trim()) throw new ResourceScopeError("Target server UUID is not configured");
   if (!targetName?.trim()) throw new ResourceScopeError("Target server name is not configured");
   const matches = (await provider.listServers()).filter((server) => uuidOf(server) === targetUuid);
   if (matches.length !== 1 || matches[0]?.name !== targetName) {
@@ -72,9 +89,30 @@ export async function requireResourceOnTarget(
   uuid: string,
   targetUuid: string,
 ): Promise<ApiRecord> {
+  const members = await provider.listResources(kind, targetUuid);
+  const inScope = members.some((item) => uuidOf(item) === uuid && (serverUuidOf(item) === undefined || serverUuidOf(item) === targetUuid));
+  if (!inScope) throw new ResourceScopeError("Resource is stale or outside the approved server scope");
   const current = await provider.getResource(kind, uuid);
-  if (uuidOf(current) !== uuid || serverUuidOf(current) !== targetUuid) {
+  if (uuidOf(current) !== uuid || (serverUuidOf(current) !== undefined && serverUuidOf(current) !== targetUuid)) {
     throw new ResourceScopeError("Resource is stale or outside the approved server scope");
   }
-  return current;
+  return { ...current, server_uuid: targetUuid };
+}
+
+export async function requireSingleServerApplication(provider: CoolifyProvider, applicationUuid: string, targetUuid: string): Promise<void> {
+  const servers = await provider.listServers();
+  const serverUuids = servers.map(uuidOf);
+  if (serverUuids.some((uuid) => !uuid) || new Set(serverUuids).size !== serverUuids.length) {
+    throw new ResourceScopeError("Server membership is unknown for this application");
+  }
+  if (!serverUuids.includes(targetUuid)) throw new ResourceScopeError("Server membership is unknown for this application");
+
+  const memberships: string[] = [];
+  for (const serverUuid of serverUuids as string[]) {
+    const resources = await provider.listServerResources(serverUuid);
+    if (resources.some((resource) => uuidOf(resource) === applicationUuid)) memberships.push(serverUuid);
+  }
+  if (memberships.length !== 1 || memberships[0] !== targetUuid) {
+    throw new ResourceScopeError("Application is assigned to multiple or unknown servers");
+  }
 }

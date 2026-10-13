@@ -15,6 +15,6 @@ export default {
     "src/policy.ts",
     "src/scope.ts",
   ],
-  thresholds: { high: 90, low: 75, break: 0 },
+  thresholds: { high: 90, low: 80, break: 80 },
   concurrency: 4,
 };

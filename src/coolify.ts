@@ -56,9 +56,10 @@ export interface CoolifyToolClient {
 
 export interface CoolifyProvider {
   listServers(): Promise<ApiRecord[]>;
-  listResources(kind: ResourceKind): Promise<ApiRecord[]>;
+  listResources(kind: ResourceKind, serverUuid?: string, environmentUuid?: string): Promise<ApiRecord[]>;
   getResource(kind: ResourceKind, uuid: string): Promise<ApiRecord>;
-  getEnvironments(projectUuid: string): Promise<ApiRecord[]>;
+  getEnvironments(projectUuid: string, serverUuid: string): Promise<ApiRecord[]>;
+  listServerResources(serverUuid: string): Promise<ApiRecord[]>;
   listDeployments(applicationUuid: string): Promise<ApiRecord[]>;
   listEnvironmentKeys(kind: Exclude<ResourceKind, "project">, uuid: string): Promise<ApiRecord[]>;
   deploy(applicationUuid: string): Promise<ApiRecord>;
@@ -90,9 +91,10 @@ export async function listPublishedTools(
 export class UnconfiguredCoolifyProvider implements CoolifyProvider {
   private unavailable(): never { throw new NotConfiguredError("Coolify MCP provider is not configured"); }
   async listServers(): Promise<ApiRecord[]> { return this.unavailable(); }
-  async listResources(_kind: ResourceKind): Promise<ApiRecord[]> { return this.unavailable(); }
+  async listResources(_kind: ResourceKind, _serverUuid?: string, _environmentUuid?: string): Promise<ApiRecord[]> { return this.unavailable(); }
   async getResource(_kind: ResourceKind, _uuid: string): Promise<ApiRecord> { return this.unavailable(); }
-  async getEnvironments(_projectUuid: string): Promise<ApiRecord[]> { return this.unavailable(); }
+  async getEnvironments(_projectUuid: string, _serverUuid: string): Promise<ApiRecord[]> { return this.unavailable(); }
+  async listServerResources(_serverUuid: string): Promise<ApiRecord[]> { return this.unavailable(); }
   async listDeployments(_applicationUuid: string): Promise<ApiRecord[]> { return this.unavailable(); }
   async listEnvironmentKeys(_kind: Exclude<ResourceKind, "project">, _uuid: string): Promise<ApiRecord[]> { return this.unavailable(); }
   async deploy(_applicationUuid: string): Promise<ApiRecord> { return this.unavailable(); }
@@ -128,8 +130,22 @@ export class CoolifyMcpProvider implements CoolifyProvider {
     return this.listAll(LIST_TOOLS.server);
   }
 
-  listResources(kind: ResourceKind): Promise<ApiRecord[]> {
-    return this.listAll(LIST_TOOLS[kind]);
+  async listResources(kind: ResourceKind, serverUuid?: string, environmentUuid?: string): Promise<ApiRecord[]> {
+    const tool = LIST_TOOLS[kind];
+    if (kind === "project") return this.listAll(tool);
+    if (!serverUuid?.trim()) throw new Error("A pinned server filter is required for resource lists");
+    const values: Record<string, readonly unknown[]> = { server_uuid: [serverUuid] };
+    if (environmentUuid !== undefined) values.environment_uuid = [environmentUuid];
+    const args = await this.semanticArgs(tool, values, true);
+    if (args.server_uuid !== serverUuid || (environmentUuid !== undefined && args.environment_uuid !== environmentUuid)) {
+      throw new Error("Coolify resource list does not support the required scope filters");
+    }
+    const rows = await this.listAll(tool, args);
+    for (const row of rows) {
+      const observedServer = resourceServerUuid(row);
+      if (observedServer !== undefined && observedServer !== serverUuid) throw new Error("Coolify returned a resource outside the requested server filter");
+    }
+    return rows;
   }
 
   async getResource(kind: ResourceKind, uuid: string): Promise<ApiRecord> {
@@ -137,10 +153,29 @@ export class CoolifyMcpProvider implements CoolifyProvider {
     return asRecord(result);
   }
 
-  async getEnvironments(projectUuid: string): Promise<ApiRecord[]> {
+  async getEnvironments(projectUuid: string, serverUuid: string): Promise<ApiRecord[]> {
     const project = await this.getResource("project", projectUuid);
     if (!Array.isArray(project.environments)) throw new Error("Unexpected Coolify MCP project response shape");
-    return project.environments.map(asRecord);
+    const environments = project.environments.map(asRecord);
+    const scoped: ApiRecord[] = [];
+    for (const environment of environments) {
+      const uuid = uuidOfRecord(environment.uuid);
+      if (!uuid) continue;
+      const lists = await Promise.all(([
+        "application", "database", "service",
+      ] as const).map((kind) => this.listResources(kind, serverUuid, uuid)));
+      if (lists.some((rows) => rows.length > 0)) scoped.push({ ...environment, server_uuid: serverUuid });
+    }
+    return scoped;
+  }
+
+  async listServerResources(serverUuid: string): Promise<ApiRecord[]> {
+    const result = await this.call("get_server_resources", { uuid: serverUuid });
+    const envelope = asRecord(result);
+    if (envelope.server_uuid !== serverUuid || !Array.isArray(envelope.resources)) {
+      throw new Error("Unexpected Coolify server-resource response shape");
+    }
+    return envelope.resources.map(asRecord);
   }
 
   async listDeployments(applicationUuid: string): Promise<ApiRecord[]> {
@@ -156,13 +191,14 @@ export class CoolifyMcpProvider implements CoolifyProvider {
     const tool = "list_env_keys";
     const args = await this.semanticArgs(tool, {
       uuid: [uuid],
-      resource_type: [kind],
-      type: [kind],
-      kind: [kind],
+      resource: [kind],
     });
     const result = await this.call(tool, args);
-    if (!Array.isArray(result)) throw new Error("Unexpected Coolify MCP environment-key response shape");
-    return result.map(asRecord);
+    const envelope = asRecord(result);
+    if (envelope.uuid !== uuid || envelope.resource !== kind || !Array.isArray(envelope.keys)) {
+      throw new Error("Unexpected Coolify MCP environment-key response shape");
+    }
+    return envelope.keys.map(asRecord);
   }
 
   async deploy(applicationUuid: string): Promise<ApiRecord> {
@@ -174,9 +210,7 @@ export class CoolifyMcpProvider implements CoolifyProvider {
     const args = await this.semanticArgs("control", {
       uuid: [uuid],
       action: ["restart"],
-      resource_type: [kind],
-      type: [kind],
-      kind: [kind],
+      resource: [kind],
     });
     const result = await this.call("control", args);
     return asRecord(result);
@@ -198,7 +232,7 @@ export class CoolifyMcpProvider implements CoolifyProvider {
       }
       if (page.nextArgs) {
         const currentPage = typeof args.page === "number" ? args.page : 1;
-        args = { ...filters, ...safePaginationArgs(page.nextArgs, currentPage) };
+        args = { ...filters, ...safePaginationArgs(page.nextArgs, currentPage, filters) };
         continue;
       }
       if (page.totalPages !== undefined) {
@@ -231,7 +265,9 @@ export class CoolifyMcpProvider implements CoolifyProvider {
     }
     const semanticGroups = [
       ["uuid", "application_uuid", "resource_uuid"],
-      ["resource_type", "type", "kind"],
+      ["resource", "resource_type", "type", "kind"],
+      ["server_uuid"],
+      ["environment_uuid"],
       ["action"],
     ];
     for (const group of semanticGroups) {
@@ -271,9 +307,10 @@ function aliasFor(key: string, values: Record<string, readonly unknown[]>): stri
     application_uuid: ["application_uuid", "uuid"],
     resource_uuid: ["resource_uuid", "uuid"],
     action: ["action"],
-    type: ["type", "resource_type", "kind"],
-    resource_type: ["resource_type", "type", "kind"],
-    kind: ["kind", "resource_type", "type"],
+    resource: ["resource", "resource_type", "type", "kind"],
+    type: ["type", "resource", "resource_type", "kind"],
+    resource_type: ["resource_type", "resource", "type", "kind"],
+    kind: ["kind", "resource", "resource_type", "type"],
   };
   return (aliases[key] ?? []).find((candidate) => values[candidate]?.length);
 }
@@ -293,8 +330,9 @@ function unpackPage(value: unknown): { items: ApiRecord[]; totalPages?: number; 
   };
 }
 
-function safePaginationArgs(args: Record<string, unknown>, currentPage: number): { page: number; per_page: number } {
-  if (Object.keys(args).some((key) => key !== "page" && key !== "per_page")) {
+function safePaginationArgs(args: Record<string, unknown>, currentPage: number, filters: Record<string, unknown>): { page: number; per_page: number } {
+  if (Object.entries(args).some(([key, value]) =>
+    key !== "page" && key !== "per_page" && (!(key in filters) || filters[key] !== value))) {
     throw new Error("Invalid Coolify pagination response");
   }
   const page = args.page;
@@ -318,4 +356,15 @@ function unwrapStructured(value: unknown): unknown {
 function asRecord(value: unknown): ApiRecord {
   if (value && typeof value === "object" && !Array.isArray(value)) return value as ApiRecord;
   throw new Error("Unexpected Coolify MCP response shape");
+}
+
+function uuidOfRecord(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function resourceServerUuid(value: ApiRecord): string | undefined {
+  const server = value.server;
+  if (server && typeof server === "object" && typeof (server as ApiRecord).uuid === "string") return (server as ApiRecord).uuid as string;
+  for (const key of ["server_uuid", "serverUuid"]) if (typeof value[key] === "string") return value[key] as string;
+  return undefined;
 }

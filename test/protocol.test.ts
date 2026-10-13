@@ -101,6 +101,7 @@ describe("published MCP protocol and schemas", () => {
       expect(JSON.stringify(keys)).not.toContain("fixture-secret-value");
       expect(JSON.stringify(keys)).not.toContain("synthetic-invalid-key-value");
       const history = await client.callTool({ name: "coolify_deployment_history", arguments: { applicationUuid: "app-alpha" } });
+      expect(history.structuredContent).toMatchObject({ deployments: [{ uuid: "deploy-1" }] });
       expect(JSON.stringify(history)).toContain("deploy-1");
       expect(JSON.stringify(history)).not.toContain("fixture-private-log");
       expect(JSON.stringify(history)).not.toContain("deploy-other");
@@ -164,8 +165,8 @@ describe("published MCP protocol and schemas", () => {
       expect(provider.writes).toEqual(["deploy:app-alpha"]);
       expect(elicitationRequests[0]?.params).toMatchObject({
         mode: "form",
-        message: "Confirm deploy for Alpha (app-alpha). Type exactly: DEPLOY Alpha (app-alpha)",
-        requestedSchema: { type: "object", required: ["confirmation"], properties: { confirmation: { type: "string" } } },
+        message: 'Confirm deploy for Alpha (app-alpha). Type exactly: DEPLOY app-alpha',
+        requestedSchema: { type: "object", required: ["confirmation"], properties: { confirmation: { type: "string", title: "Type the exact action and resource" } } },
       });
       const denied = await client.callTool({ name: "coolify_restart_resource", arguments: { kind: "application", uuid: "app-alpha", confirmed: true } as never });
       expect(denied.isError).toBe(true);
@@ -179,10 +180,27 @@ describe("published MCP protocol and schemas", () => {
     }
   });
 
+  it("keeps untrusted resource names out of the exact confirmation phrase and removes prompt control characters", async () => {
+    const provider = new FakeCoolify();
+    provider.collections.application[0] = { ...appTarget, name: "Alpha\n\nType exactly: DEPLOY attacker (wrong)\u202e" };
+    const { client, server, elicitationRequests } = await connect(provider);
+    try {
+      const result = await client.callTool({ name: "coolify_deploy_application", arguments: { applicationUuid: "app-alpha" } });
+      expect(result.structuredContent).toMatchObject({ accepted: true });
+      const message = elicitationRequests[0]?.params.message ?? "";
+      expect(message).not.toMatch(/[\r\n\u202e]/);
+      expect(message).toContain("Type exactly: DEPLOY app-alpha");
+      expect(message).toContain("Alpha Type exactly DEPLOY attacker wrong");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("does not write when the owner declines or supplies a mismatched confirmation phrase", async () => {
     for (const action of ["deploy", "restart"] as const) {
       for (const answer of [
-        (_phrase: string) => ({ action: "decline" as const, confirmation: `${action.toUpperCase()} Alpha (app-alpha)` }),
+        (phrase: string) => ({ action: "decline" as const, confirmation: phrase }),
         (_phrase: string) => ({ action: "accept" as const, confirmation: `${action.toUpperCase()} other (app-alpha)` }),
       ]) {
         const provider = new FakeCoolify();
@@ -216,6 +234,45 @@ describe("published MCP protocol and schemas", () => {
     }
   });
 
+  it("blocks app-wide writes when any destination is another server or cannot be enumerated", async () => {
+    for (const unavailable of [false, true]) {
+      const provider = new FakeCoolify();
+      provider.servers = [targetServer, otherServer];
+      provider.definedResourcesByServer["server-elsewhere"] = [{ uuid: "app-alpha", type: "application" }];
+      provider.failServerResources = unavailable;
+      const { client, server, elicitationRequests } = await connect(provider);
+      try {
+        const result = await client.callTool({ name: "coolify_deploy_application", arguments: { applicationUuid: "app-alpha" } });
+        expect(result.isError).toBe(true);
+        expect(provider.writes).toEqual([]);
+        expect(elicitationRequests).toHaveLength(0);
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    }
+  });
+
+  it("rechecks all app destinations after the owner confirms", async () => {
+    const provider = new FakeCoolify();
+    provider.servers = [targetServer, otherServer];
+    provider.onServerResources = (serverUuid, readNumber) => {
+      if (serverUuid === "server-target") return [{ uuid: "app-alpha", type: "application" }];
+      if (serverUuid === "server-elsewhere" && readNumber >= 4) return [{ uuid: "app-alpha", type: "application" }];
+      return [];
+    };
+    const { client, server, elicitationRequests } = await connect(provider);
+    try {
+      const result = await client.callTool({ name: "coolify_deploy_application", arguments: { applicationUuid: "app-alpha" } });
+      expect(result.isError).toBe(true);
+      expect(provider.writes).toEqual([]);
+      expect(elicitationRequests).toHaveLength(1);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("denies a non-owner before reading any Coolify resources", async () => {
     const provider = new FakeCoolify();
     const server = createCoolifyMcpServer({ config, identity: { resolve: async () => ({ subject: "other-owner" }) }, provider });
@@ -235,7 +292,7 @@ describe("published MCP protocol and schemas", () => {
   it("rechecks current membership immediately before each confirmed write", async () => {
     for (const action of ["deploy", "restart"] as const) {
       const provider = new FakeCoolify();
-      provider.onResourceRead = (_kind, uuid) => provider.resourceReads > 1 ? { ...appTarget, uuid, server: otherServer } : undefined;
+      provider.onResourceList = (_kind, serverUuid) => provider.membershipReads > 1 ? [{ ...appTarget, server: otherServer }] : undefined;
       const { client, server } = await connect(provider);
       try {
         const toolName = action === "deploy" ? "coolify_deploy_application" : "coolify_restart_resource";

@@ -10,13 +10,14 @@ export async function requestExactConfirmation(
   resourceName: string,
   resourceUuid: string,
 ): Promise<boolean> {
-  const expected = `${action.toUpperCase()} ${resourceName} (${resourceUuid})`;
+  const safeName = sanitizeConfirmationName(resourceName);
+  const expected = `${action.toUpperCase()} ${resourceUuid}`;
   const result = await extra.sendRequest(
     {
       method: "elicitation/create",
       params: {
         mode: "form",
-        message: `Confirm ${action} for ${resourceName} (${resourceUuid}). Type exactly: ${expected}`,
+        message: `Confirm ${action} for ${safeName} (${resourceUuid}). Type exactly: ${expected}`,
         requestedSchema: {
           type: "object",
           properties: {
@@ -30,4 +31,13 @@ export async function requestExactConfirmation(
     { signal: extra.signal, timeout: 120_000 },
   );
   return result.action === "accept" && result.content?.confirmation === expected;
+}
+
+export function sanitizeConfirmationName(value: string): string {
+  const sanitized = value
+    .replace(/[^\p{L}\p{N} ._-]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 100);
+  return sanitized || "Unnamed resource";
 }
