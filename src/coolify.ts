@@ -106,9 +106,10 @@ export class UnconfiguredCoolifyProvider implements CoolifyProvider {
 }
 
 /**
- * The upstream contract is Coolify's documented Streamable HTTP MCP server,
- * not a guessed REST route adapter. Runtime tool schemas are checked before
- * each call so an upstream contract change fails closed.
+ * Resource and operational calls use Coolify's documented Streamable HTTP MCP
+ * server. Application configuration writes use a separate fixed adapter for
+ * Coolify's documented PATCH API route. Runtime MCP tool schemas are checked
+ * before each call so an upstream contract change fails closed.
  */
 export class CoolifyMcpProvider implements CoolifyProvider {
   private toolsPromise?: Promise<readonly PublishedTool[]>;

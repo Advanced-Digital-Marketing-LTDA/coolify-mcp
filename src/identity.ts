@@ -5,9 +5,9 @@ import { AccessDeniedError, NotConfiguredError } from "./errors.js";
 export type Principal = Readonly<{ subject: string }>;
 
 /**
- * The host must implement this with validated OAuth identity from its supported
- * Sites connection. This deliberately does not interpret HTTP headers, email,
- * or caller supplied tool arguments as identity.
+ * Implementations resolve identity only from server-verified OAuth token data.
+ * The hosted adapter uses the pinned OIDC subject; it does not interpret
+ * HTTP headers, email, or caller-supplied tool arguments as identity.
  */
 export interface VerifiedIdentityProvider {
   resolve(authInfo: AuthInfo | undefined): Promise<Principal>;
@@ -15,7 +15,7 @@ export interface VerifiedIdentityProvider {
 
 export class UnconfiguredIdentityProvider implements VerifiedIdentityProvider {
   async resolve(_authInfo: AuthInfo | undefined): Promise<Principal> {
-    throw new NotConfiguredError("Verified Sites identity is not configured");
+    throw new NotConfiguredError("Verified OAuth owner identity is not configured");
   }
 }
 

@@ -11,8 +11,8 @@ const config = { origin: "https://coolify.example.test", targetServerName: "Targ
 
 type ElicitationAnswer = { action: "accept" | "decline" | "cancel"; confirmation?: string };
 
-async function connect(provider = new FakeCoolify(), answer?: (phrase: string) => ElicitationAnswer) {
-  const server = createCoolifyMcpServer({ config, identity: ownerIdentity, provider });
+async function connect(provider = new FakeCoolify(), answer?: (phrase: string) => ElicitationAnswer, configWriter = { update: async (_uuid: string, _field: string, _value: unknown) => undefined }) {
+  const server = createCoolifyMcpServer({ config, identity: ownerIdentity, provider, configWriter });
   const client = new Client({ name: "protocol-test-client", version: "1.0.0" }, { capabilities: { elicitation: { form: {} } } });
   const elicitationRequests: Array<{ params: { mode?: string; message: string; requestedSchema: unknown } }> = [];
   client.setRequestHandler(ElicitRequestSchema, async (request) => {
@@ -38,19 +38,23 @@ describe("published MCP protocol and schemas", () => {
       expect([...tools.keys()].sort()).toEqual([
         "coolify_deploy_application",
         "coolify_deployment_history",
+        "coolify_diagnostic_logs",
         "coolify_environment_key_names",
         "coolify_inventory",
         "coolify_resource_status",
         "coolify_restart_resource",
+        "coolify_update_application_configuration",
       ]);
       for (const name of ["coolify_deploy_application", "coolify_restart_resource"]) {
-        expect(tools.get(name)?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true });
+        expect(tools.get(name)?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false });
       }
-      for (const name of ["coolify_inventory", "coolify_resource_status", "coolify_deployment_history", "coolify_environment_key_names"]) {
+      for (const name of ["coolify_inventory", "coolify_resource_status", "coolify_deployment_history", "coolify_environment_key_names", "coolify_diagnostic_logs"]) {
         expect(tools.get(name)?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true });
       }
       expect(tools.get("coolify_deploy_application")?.inputSchema.properties).toEqual({ applicationUuid: expect.any(Object) });
       expect(tools.get("coolify_restart_resource")?.inputSchema.properties).toEqual({ kind: expect.any(Object), uuid: expect.any(Object) });
+      expect(tools.get("coolify_update_application_configuration")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+      expect(tools.get("coolify_update_application_configuration")?.inputSchema.properties).toEqual({ applicationUuid: expect.any(Object), field: expect.any(Object), value: expect.any(Object) });
       expect([...tools.keys()].some((name) => /delete|stop|cancel|force|tag|clone|preview|configuration_write/i.test(name))).toBe(false);
       expect(tools.get("coolify_inventory")?.outputSchema).toMatchObject({ properties: { server: expect.any(Object), resources: expect.any(Object), projects: expect.any(Object) } });
       expect(tools.get("coolify_inventory")?.outputSchema.properties?.server).toMatchObject({ properties: { reachable: { type: ["boolean", "null"] }, usable: { type: ["boolean", "null"] } } });
@@ -180,6 +184,66 @@ describe("published MCP protocol and schemas", () => {
       await client.close();
       await server.close();
     }
+  });
+
+  it("updates one allowlisted application setting only after exact current-to-proposed confirmation", async () => {
+    const provider = new FakeCoolify();
+    const updates: unknown[][] = [];
+    const { client, server, elicitationRequests } = await connect(provider, undefined, { update: async (...args: unknown[]) => { updates.push(args); } });
+    try {
+      const result = await client.callTool({ name: "coolify_update_application_configuration", arguments: { applicationUuid: "app-alpha", field: "description", value: "New description" } });
+      expect(result.structuredContent).toEqual({ accepted: true, applicationUuid: "app-alpha", field: "description", message: "Application configuration update accepted" });
+      expect(updates).toEqual([["app-alpha", "description", "New description", expect.any(AbortSignal)]]);
+      expect(elicitationRequests[0]?.params.message).toContain('description "Synthetic app" -> "New description"');
+      expect(elicitationRequests[0]?.params.message).toContain('Type exactly: CONFIGURE app-alpha description "Synthetic app" -> "New description"');
+      expect(elicitationRequests[0]?.params.requestedSchema).toEqual({ type: "object", properties: { confirmation: { type: "string", title: "Type the exact application change" } }, required: ["confirmation"] });
+    } finally { await client.close(); await server.close(); }
+  });
+
+  it("never updates unallowlisted fields or writes after a changed current value", async () => {
+    const provider = new FakeCoolify();
+    const updates: unknown[][] = [];
+    const { client, server } = await connect(provider, undefined, { update: async (...args: unknown[]) => { updates.push(args); } });
+    try {
+      const refused = await client.callTool({ name: "coolify_update_application_configuration", arguments: { applicationUuid: "app-alpha", field: "manual_webhook_secret_github", value: "synthetic-secret" } as never });
+      expect(refused.isError).toBe(true);
+      expect(updates).toEqual([]);
+    } finally { await client.close(); await server.close(); }
+    const changing = new FakeCoolify();
+    let reads = 0;
+    changing.onResourceRead = (_kind, _uuid) => ({ ...appTarget, description: ++reads > 1 ? "Changed after confirmation" : "Synthetic app" });
+    const { client: c, server: s } = await connect(changing, undefined, { update: async (...args: unknown[]) => { updates.push(args); } });
+    try {
+      const result = await c.callTool({ name: "coolify_update_application_configuration", arguments: { applicationUuid: "app-alpha", field: "description", value: "New description" } });
+      expect(result.isError).toBe(true);
+      expect(updates).toEqual([]);
+    } finally { await c.close(); await s.close(); }
+  });
+
+  it("does not apply application configuration when the elicited diff is declined or mismatched", async () => {
+    const provider = new FakeCoolify();
+    const updates: unknown[][] = [];
+    const { client, server } = await connect(provider, () => ({ action: "accept", confirmation: "CONFIGURE wrong-value" }), { update: async (...args: unknown[]) => { updates.push(args); } });
+    try {
+      const result = await client.callTool({ name: "coolify_update_application_configuration", arguments: { applicationUuid: "app-alpha", field: "description", value: "New description" } });
+      expect(result.structuredContent).toMatchObject({ accepted: false, message: "Configuration update was not confirmed" });
+      expect(updates).toEqual([]);
+      expect(provider.writes).toEqual([]);
+    } finally { await client.close(); await server.close(); }
+  });
+
+  it("returns bounded metadata-only diagnostics without recording arguments or provider payloads", async () => {
+    const { client, server } = await connect();
+    try {
+      await client.callTool({ name: "coolify_inventory", arguments: {} });
+      const result = await client.callTool({ name: "coolify_diagnostic_logs", arguments: { limit: 50 } });
+      const text = JSON.stringify(result);
+      expect(text).toContain('"operation":"inventory"');
+      expect(text).not.toContain("fixture-secret-value");
+      expect(text).not.toContain("never-return");
+      expect(text).not.toContain("synthetic-token");
+      expect((result.structuredContent as { events: unknown[] }).events.length).toBeLessThanOrEqual(50);
+    } finally { await client.close(); await server.close(); }
   });
 
   it("reports a declined Coolify deployment queue request as not accepted", async () => {

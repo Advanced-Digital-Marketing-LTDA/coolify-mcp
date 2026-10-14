@@ -2,10 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { type RuntimeConfig, isActivated } from "./config.js";
-import { requestExactConfirmation, sanitizeConfirmationName } from "./confirmation.js";
+import { requestConfigConfirmation, requestExactConfirmation, sanitizeConfirmationName } from "./confirmation.js";
 import { UnconfiguredCoolifyProvider, type ApiRecord, type CoolifyProvider, type ResourceKind } from "./coolify.js";
 import { AccessDeniedError, NotConfiguredError, publicError } from "./errors.js";
 import { OwnerIdentityGate, UnconfiguredIdentityProvider, type VerifiedIdentityProvider } from "./identity.js";
+import { DiagnosticLog } from "./diagnostics.js";
+import type { CoolifyApplicationConfigWriter } from "./coolify-rest.js";
+import { APPLICATION_CONFIG_FIELDS, validateApplicationConfig } from "./policy.js";
 import { safeFilteredResource, safeVerifiedDetails, serverUuidOf, uuidOf, requirePinnedServer, requireResourceOnTarget, requireSingleServerApplication } from "./scope.js";
 
 const uuidSchema = z.string().min(1).max(128).regex(/^[a-zA-Z0-9-]+$/);
@@ -16,11 +19,14 @@ export type ServerDependencies = Readonly<{
   config: RuntimeConfig;
   identity?: VerifiedIdentityProvider;
   provider?: CoolifyProvider;
+  configWriter?: Pick<CoolifyApplicationConfigWriter, "update">;
+  diagnostics?: DiagnosticLog;
 }>;
 
 export function createCoolifyMcpServer(dependencies: ServerDependencies): McpServer {
   const { config } = dependencies;
   const provider = dependencies.provider ?? new UnconfiguredCoolifyProvider();
+  const diagnostics = dependencies.diagnostics ?? new DiagnosticLog();
   const gate = new OwnerIdentityGate(config.ownerSubject, dependencies.identity ?? new UnconfiguredIdentityProvider());
   const server = new McpServer(
     { name: "coolify-mcp-foundation", version: "0.1.0" },
@@ -29,8 +35,8 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
         "Coolify integration for the pinned owner only.",
         "Coolify origin and target server name are fixed deployment settings and are never caller-controlled.",
         "All resource lists use a server filter; resource details are returned only after current membership is verified.",
-        "Deploy and restart ask for exact interactive confirmation and recheck current server and application destinations before writing.",
-        "Secret values, logs, arbitrary URLs, and shell execution are not exposed.",
+        "Deploy, restart, and application configuration changes ask for exact interactive confirmation and recheck current server and application destinations before writing.",
+        "Secret values and deployment logs are not exposed; diagnostics contain bounded metadata only. Arbitrary URLs and shell execution are not available.",
       ].join(" "),
       capabilities: { tools: {} },
     },
@@ -42,14 +48,20 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     await requirePinnedServer(provider, config.targetServerUuid, config.targetServerName);
   };
 
-  const tool = (callback: (args: any, extra: any) => Promise<unknown>): any => async (...callArgs: any[]) => {
+  const outcomes = new WeakMap<object, "ok" | "failed">();
+  const outcome = <T extends object>(result: T, status: "ok" | "failed"): T => { outcomes.set(result, status); return result; };
+  const tool = (operation: Parameters<DiagnosticLog["record"]>[0], callback: (args: any, extra: any) => Promise<unknown>): any => async (...callArgs: any[]) => {
     const extra = callArgs.length === 1 ? callArgs[0] : callArgs[1];
     const args = callArgs.length === 1 ? {} : callArgs[0];
+    const started = Date.now();
     try {
       await owner(extra.authInfo);
       const result = await callback(args, extra);
+      const deniedWrite = typeof result === "object" && result !== null && "accepted" in result && result.accepted === false;
+      diagnostics.record(operation, (typeof result === "object" && result !== null ? outcomes.get(result) : undefined) ?? (deniedWrite ? "denied" : "ok"), Date.now() - started);
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result as Record<string, unknown> };
     } catch (error) {
+      diagnostics.record(operation, error instanceof AccessDeniedError ? "denied" : "failed", Date.now() - started);
       return { content: [{ type: "text", text: publicError(error) }], isError: true };
     }
   };
@@ -60,7 +72,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     inputSchema: z.strictObject({}),
     outputSchema: z.object({ server: z.object({ uuid: z.string(), name: z.string(), status: z.string().nullable(), reachable: z.boolean().nullable(), usable: z.boolean().nullable() }), resources: z.array(z.object({ uuid: z.string(), name: z.string(), kind: kindSchema, status: z.string().nullable(), serverUuid: z.string(), project: z.string().nullable(), environment: z.string().nullable(), fqdn: z.array(z.string()) })), projects: z.array(z.object({ uuid: z.string(), name: z.string(), environments: z.array(z.object({ uuid: z.string(), name: z.string() })) })) }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, tool(async () => {
+  }, tool("inventory", async () => {
     const target = await requirePinnedServer(provider, config.targetServerUuid, config.targetServerName);
     const [applications, databases, services, projects] = await Promise.all([
       provider.listResources("application", config.targetServerUuid!),
@@ -117,7 +129,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
       environments: z.array(z.object({ uuid: z.string(), name: z.string() })).optional(),
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, tool(async ({ kind, uuid }) => {
+  }, tool("resource_read", async ({ kind, uuid }) => {
     const target = config.targetServerUuid!;
     if (kind === "project") {
       const project = await provider.getResource("project", uuid);
@@ -137,7 +149,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     inputSchema: z.strictObject({ applicationUuid: uuidSchema }),
     outputSchema: z.object({ applicationUuid: z.string(), deployments: z.array(z.object({ uuid: z.string().nullable(), status: z.string().nullable(), createdAt: z.string().nullable(), updatedAt: z.string().nullable() })) }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, tool(async ({ applicationUuid }) => {
+  }, tool("deployment_history", async ({ applicationUuid }) => {
     await requireResourceOnTarget(provider, "application", applicationUuid, config.targetServerUuid!);
     const deployments = await provider.listDeployments(applicationUuid);
     return {
@@ -159,7 +171,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     inputSchema: z.strictObject({ kind: mutableKindSchema, uuid: uuidSchema }),
     outputSchema: z.object({ uuid: z.string(), keys: z.array(z.string()) }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, tool(async ({ kind, uuid }) => {
+  }, tool("env_key_names", async ({ kind, uuid }) => {
     await requireResourceOnTarget(provider, kind, uuid, config.targetServerUuid!);
     const records = await provider.listEnvironmentKeys(kind, uuid);
     const keys = [...new Set(records.flatMap((item) => {
@@ -174,15 +186,18 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     description: "Queue a normal deployment for one application after exact interactive user confirmation. Force builds and previews are not supported.",
     inputSchema: z.strictObject({ applicationUuid: uuidSchema }),
     outputSchema: z.object({ accepted: z.boolean(), message: z.string() }),
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-  }, tool(async ({ applicationUuid }, extra) => {
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, tool("deploy", async ({ applicationUuid }, extra) => {
     const current = await requireResourceOnTarget(provider, "application", applicationUuid, config.targetServerUuid!);
     await requireSingleServerApplication(provider, applicationUuid, config.targetServerUuid!);
     if (!(await requestExactConfirmation(extra, "deploy", label(current), applicationUuid))) return { accepted: false, message: "Deployment was not confirmed" };
+    await owner(extra.authInfo);
     await recheckBeforeWrite(provider, config.targetServerUuid, config.targetServerName, "application", applicationUuid);
+    await gate.requireOwner(extra.authInfo);
+    extra.signal.throwIfAborted();
     const result = await provider.deploy(applicationUuid);
     if (result.ok !== true || result.application_uuid !== applicationUuid || typeof result.deployment_uuid !== "string" || !result.deployment_uuid) {
-      return { accepted: false, message: "Coolify did not queue the deployment request" };
+      return outcome({ accepted: false, message: "Coolify did not queue the deployment request" }, "failed");
     }
     return { accepted: true, message: "Deployment request accepted" };
   }));
@@ -192,15 +207,52 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     description: "Restart one application, database, or service after exact interactive user confirmation. Stop and cancel actions are not supported.",
     inputSchema: z.strictObject({ kind: mutableKindSchema, uuid: uuidSchema }),
     outputSchema: z.object({ accepted: z.boolean(), message: z.string() }),
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-  }, tool(async ({ kind, uuid }, extra) => {
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, tool("restart", async ({ kind, uuid }, extra) => {
     const current = await requireResourceOnTarget(provider, kind, uuid, config.targetServerUuid!);
     if (kind === "application") await requireSingleServerApplication(provider, uuid, config.targetServerUuid!);
     if (!(await requestExactConfirmation(extra, "restart", label(current), uuid))) return { accepted: false, message: "Restart was not confirmed" };
+    await owner(extra.authInfo);
     await recheckBeforeWrite(provider, config.targetServerUuid, config.targetServerName, kind, uuid);
+    await gate.requireOwner(extra.authInfo);
+    extra.signal.throwIfAborted();
     await provider.restart(kind, uuid);
     return { accepted: true, message: "Restart request accepted" };
   }));
+
+  server.registerTool("coolify_update_application_configuration", {
+    title: "Update application configuration",
+    description: "Change one allowlisted, non-secret application setting after exact confirmation of the current and proposed values. Requires rechecked membership on the pinned server.",
+    inputSchema: z.strictObject({ applicationUuid: uuidSchema, field: z.enum(APPLICATION_CONFIG_FIELDS), value: z.union([z.string().max(2000), z.boolean()]) }),
+    outputSchema: z.object({ accepted: z.boolean(), applicationUuid: z.string(), field: z.enum(APPLICATION_CONFIG_FIELDS), message: z.string() }),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, tool("config_update", async ({ applicationUuid, field, value }, extra) => {
+    if (!dependencies.configWriter) throw new NotConfiguredError("Application configuration updates are not configured");
+    if (!validateApplicationConfig(field, value)) throw new AccessDeniedError("Invalid application configuration field or value");
+    const current = await requireResourceOnTarget(provider, "application", applicationUuid, config.targetServerUuid!);
+    await requireSingleServerApplication(provider, applicationUuid, config.targetServerUuid!);
+    const before = current[field];
+    if (!validateApplicationConfig(field, before)) throw new AccessDeniedError("Current configuration field is unavailable for safe confirmation");
+    if (before === value) return outcome({ accepted: false, applicationUuid, field, message: "Requested value already matches the current configuration" }, "ok");
+    if (!(await requestConfigConfirmation(extra, label(current), applicationUuid, field, before, value))) return { accepted: false, applicationUuid, field, message: "Configuration update was not confirmed" };
+    await owner(extra.authInfo);
+    await recheckBeforeWrite(provider, config.targetServerUuid, config.targetServerName, "application", applicationUuid);
+    const latest = await requireResourceOnTarget(provider, "application", applicationUuid, config.targetServerUuid!);
+    if (latest[field] !== before) throw new AccessDeniedError("Configuration changed after confirmation; review the new value and retry");
+    await requireSingleServerApplication(provider, applicationUuid, config.targetServerUuid!);
+    await gate.requireOwner(extra.authInfo);
+    extra.signal.throwIfAborted();
+    await dependencies.configWriter.update(applicationUuid, field, value, extra.signal);
+    return { accepted: true, applicationUuid, field, message: "Application configuration update accepted" };
+  }));
+
+  server.registerTool("coolify_diagnostic_logs", {
+    title: "Read diagnostic logs",
+    description: "Read up to 50 bounded diagnostic events. Entries contain only operation names, outcomes, timestamps, opaque IDs, and durations; request content and secrets are never recorded.",
+    inputSchema: z.strictObject({ limit: z.number().int().min(1).max(50).optional() }),
+    outputSchema: z.object({ events: z.array(z.object({ id: z.string(), at: z.string(), operation: z.string(), outcome: z.string(), durationMs: z.number() })) }),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, tool("diagnostic_read", async ({ limit }) => ({ events: diagnostics.read(limit) })));
 
   return server;
 }
