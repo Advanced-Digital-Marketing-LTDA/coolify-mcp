@@ -108,7 +108,7 @@ export async function httpFixture() {
   }
   const request = (path: string, init?: RequestInit) => fetch(new URL(path, publicOrigin), init);
   async function register(callbackId = "fixture-callback") {
-    const response = await request("/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ redirect_uris: [callbackId.startsWith("https://") ? callbackId : `https://chatgpt.com/connector/oauth/${callbackId}`], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }) });
+    const response = await request("/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ redirect_uris: [URL.canParse(callbackId) ? callbackId : `https://chatgpt.com/connector/oauth/${callbackId}`], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }) });
     return { response, client: await response.json() as { client_id: string; redirect_uris: string[] } };
   }
   async function authorize(client: { client_id: string; redirect_uris: string[] }) {
