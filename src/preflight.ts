@@ -74,6 +74,30 @@ function hiddenCheck(setting: string, value: string | undefined, valid = (_v: st
   return { setting, status: "ok", detail: "set (value hidden)" };
 }
 
+function issuerCheck(raw: string | undefined, issuer: string | undefined): Check {
+  const setting = "OIDC_ISSUER";
+  if (!raw) return { setting, status: "missing", detail: "set the provider's HTTPS issuer URL" };
+  if (!issuer) return { setting, status: "invalid", detail: "must be an HTTPS URL without credentials, query or fragment" };
+  if (isReservedHost(issuer)) return { setting, status: "invalid", detail: "reserved example or local hostname" };
+  return { setting, status: "ok", detail: issuer };
+}
+
+// Settings pinned to an owner-approved value.
+function pinnedCheck(setting: string, value: string | undefined, approved: string, mismatch: string): Check {
+  const trimmed = value?.trim();
+  if (!trimmed) return { setting, status: "missing", detail: `set ${approved}` };
+  if (trimmed !== approved) return { setting, status: "invalid", detail: mismatch };
+  return { setting, status: "ok", detail: approved };
+}
+
+function proxyCheck(value: string | undefined): Check {
+  const setting = "MCP_TRUSTED_PROXY_CIDRS";
+  if (!value?.trim()) return { setting, status: "missing", detail: "set the ingress peer IPs/CIDRs" };
+  const proxies = parseTrustedProxies(value);
+  if (!proxies) return { setting, status: "invalid", detail: "use at most 32 explicit IPs/CIDRs; no wildcards or hop counts" };
+  return { setting, status: "ok", detail: proxies.join(",") };
+}
+
 /**
  * Validates activation settings offline. Output contains only non-secret
  * settings and derived public URLs; secret values are never echoed.
@@ -82,29 +106,18 @@ export function runPreflight(env: NodeJS.ProcessEnv = process.env): PreflightRep
   const publicOrigin = originCheck("MCP_PUBLIC_ORIGIN", env.MCP_PUBLIC_ORIGIN, true);
   const issuer = env.OIDC_ISSUER?.trim();
   const config = readRuntimeConfig(env);
-  const uuid = env.COOLIFY_TARGET_SERVER_UUID?.trim();
-  const proxies = parseTrustedProxies(env.MCP_TRUSTED_PROXY_CIDRS);
   const checks: Check[] = [
     publicOrigin,
     originCheck("COOLIFY_ORIGIN", env.COOLIFY_ORIGIN),
-    !issuer ? { setting: "OIDC_ISSUER", status: "missing", detail: "set the provider's HTTPS issuer URL" }
-      : !config.oidcIssuer ? { setting: "OIDC_ISSUER", status: "invalid", detail: "must be an HTTPS URL without credentials, query or fragment" }
-        : isReservedHost(config.oidcIssuer) ? { setting: "OIDC_ISSUER", status: "invalid", detail: "reserved example or local hostname" }
-          : { setting: "OIDC_ISSUER", status: "ok", detail: config.oidcIssuer },
+    issuerCheck(issuer, config.oidcIssuer),
     env.OIDC_CLIENT_ID?.trim() ? { setting: "OIDC_CLIENT_ID", status: "ok", detail: env.OIDC_CLIENT_ID.trim() }
       : { setting: "OIDC_CLIENT_ID", status: "missing", detail: "set the confidential client ID" },
     hiddenCheck("OIDC_CLIENT_SECRET", env.OIDC_CLIENT_SECRET),
     hiddenCheck("COOLIFY_OWNER_SUBJECT", env.COOLIFY_OWNER_SUBJECT, isStableOwnerSubject, "must be the stable OIDC sub claim, not an email"),
     hiddenCheck("COOLIFY_API_TOKEN", env.COOLIFY_API_TOKEN),
-    !env.COOLIFY_TARGET_SERVER_NAME?.trim() ? { setting: "COOLIFY_TARGET_SERVER_NAME", status: "missing", detail: `set ${APPROVED_SERVER_NAME}` }
-      : env.COOLIFY_TARGET_SERVER_NAME.trim() === APPROVED_SERVER_NAME ? { setting: "COOLIFY_TARGET_SERVER_NAME", status: "ok", detail: APPROVED_SERVER_NAME }
-        : { setting: "COOLIFY_TARGET_SERVER_NAME", status: "invalid", detail: "differs from the owner-approved server name" },
-    !uuid ? { setting: "COOLIFY_TARGET_SERVER_UUID", status: "missing", detail: `set ${APPROVED_SERVER_UUID}` }
-      : uuid === APPROVED_SERVER_UUID ? { setting: "COOLIFY_TARGET_SERVER_UUID", status: "ok", detail: uuid }
-        : { setting: "COOLIFY_TARGET_SERVER_UUID", status: "invalid", detail: "differs from the owner-approved server" },
-    !env.MCP_TRUSTED_PROXY_CIDRS?.trim() ? { setting: "MCP_TRUSTED_PROXY_CIDRS", status: "missing", detail: "set the ingress peer IPs/CIDRs" }
-      : proxies ? { setting: "MCP_TRUSTED_PROXY_CIDRS", status: "ok", detail: proxies.join(",") }
-        : { setting: "MCP_TRUSTED_PROXY_CIDRS", status: "invalid", detail: "use at most 32 explicit IPs/CIDRs; no wildcards or hop counts" },
+    pinnedCheck("COOLIFY_TARGET_SERVER_NAME", env.COOLIFY_TARGET_SERVER_NAME, APPROVED_SERVER_NAME, "differs from the owner-approved server name"),
+    pinnedCheck("COOLIFY_TARGET_SERVER_UUID", env.COOLIFY_TARGET_SERVER_UUID, APPROVED_SERVER_UUID, "differs from the owner-approved server"),
+    proxyCheck(env.MCP_TRUSTED_PROXY_CIDRS),
   ];
   // Backstop: if the runtime gate ever disagrees with the checks above, say so
   // rather than failing with every line green.
