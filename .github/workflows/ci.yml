@@ -27,3 +27,5 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run mutation
+      - run: npm run smoke
+      - run: npm run smoke:docker
