@@ -82,13 +82,14 @@ describe("activation preflight", () => {
     expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: "https://[::ffff:1.1.1.1]" }, "MCP_PUBLIC_ORIGIN")).toBe("ok");
   });
 
-  it.each(["https://10.0.0.1", "https://172.16.5.4", "https://192.168.1.10", "https://169.254.1.1", "https://100.64.0.1", "https://[fd00::1]", "https://[fe80::1]", "https://[::ffff:10.0.0.1]", "https://224.0.0.1", "https://255.255.255.255", "https://198.18.0.1", "https://[ff02::1]", "https://[::ffff:224.0.0.1]", "https://[100::1]"])("rejects non-routable public origin %s", (value) => {
+  it.each(["https://10.0.0.1", "https://172.16.5.4", "https://192.168.1.10", "https://169.254.1.1", "https://100.64.0.1", "https://[fd00::1]", "https://[fe80::1]", "https://[::ffff:10.0.0.1]", "https://224.0.0.1", "https://255.255.255.255", "https://198.18.0.1", "https://[ff02::1]", "https://[::ffff:224.0.0.1]", "https://[100::1]", "https://192.88.99.2", "https://mcp.internal", "https://bridge.home.arpa", "https://mcp.alt"])("rejects non-routable public origin %s", (value) => {
     expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: value }, "MCP_PUBLIC_ORIGIN")).toBe("invalid");
   });
 
   it("allows a private Coolify origin reachable only from the host", () => {
     expect(statusOf({ ...complete, COOLIFY_ORIGIN: "https://10.0.0.5" }, "COOLIFY_ORIGIN")).toBe("ok");
     expect(statusOf({ ...complete, COOLIFY_ORIGIN: "https://[fd00::5]" }, "COOLIFY_ORIGIN")).toBe("ok");
+    expect(statusOf({ ...complete, COOLIFY_ORIGIN: "https://coolify.internal" }, "COOLIFY_ORIGIN")).toBe("ok");
     expect(statusOf({ ...complete, COOLIFY_ORIGIN: "https://224.0.0.1" }, "COOLIFY_ORIGIN")).toBe("invalid");
   });
 
@@ -117,7 +118,7 @@ describe("trusted proxy parsing", () => {
 describe("issuer discovery check", () => {
   const issuer = "https://login.bridge-owner.dev/realms/owner";
   const respond = (body: unknown, status = 200) => vi.fn(async (_url: URL | RequestInfo, _init?: RequestInit) => new Response(JSON.stringify(body), { status }));
-  const good = { issuer, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] };
+  const good = { issuer, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"] };
 
   it("fetches the well-known document without credentials or redirects", async () => {
     const request = respond(good);
@@ -134,6 +135,8 @@ describe("issuer discovery check", () => {
     [{ ...good, issuer: 42 }, /issuer does not match/],
     [{ ...good, code_challenge_methods_supported: ["plain"] }, /PKCE S256/],
     [{ ...good, response_types_supported: ["id_token"] }, /authorization code/],
+    [{ ...good, token_endpoint_auth_methods_supported: ["client_secret_basic"] }, /client_secret_post/],
+    [{ ...good, token_endpoint_auth_methods_supported: undefined }, /client_secret_post/],
   ])("rejects unsuitable providers", async (body, message) => {
     const result = await checkDiscovery(issuer, respond(body) as typeof fetch);
     expect(result.ok).toBe(false);

@@ -12,6 +12,9 @@ export type PreflightReport = Readonly<{ ready: boolean; checks: readonly Check[
 
 // RFC 2606/6761 names cannot be the final public or Coolify origin.
 const RESERVED_NAMES = ["invalid", "example", "test", "localhost", "local", "example.com", "example.net", "example.org"];
+// Private-use namespaces (ICANN .internal, RFC 8375, RFC 9476) never resolve in
+// global DNS, so they can only be an internal Coolify origin.
+const PRIVATE_NAMES = ["internal", "home.arpa", "alt"];
 // IPv4 special-purpose ranges (RFC 6890). "any" ranges can never serve HTTPS
 // to anyone; "public" ranges may still be a valid internal Coolify origin but
 // never the public connector origin. IPv4-mapped IPv6 forms are blocked too.
@@ -20,6 +23,7 @@ const IPV4_SPECIAL = [
   ["192.0.2.0", 24, "any"], ["198.51.100.0", 24, "any"], ["203.0.113.0", 24, "any"],
   ["10.0.0.0", 8, "public"], ["172.16.0.0", 12, "public"], ["192.168.0.0", 16, "public"],
   ["169.254.0.0", 16, "public"], ["100.64.0.0", 10, "public"], ["192.0.0.0", 24, "public"], ["198.18.0.0", 15, "public"],
+  ["192.88.99.0", 24, "public"],
 ] as const;
 const LOCAL_ADDRESSES = new BlockList();
 const PRIVATE_ADDRESSES = new BlockList();
@@ -48,7 +52,8 @@ function isReservedHost(origin: string, publicOnly = false): boolean {
     if (LOCAL_ADDRESSES.check(address, family)) return true;
     return publicOnly && (PRIVATE_ADDRESSES.check(address, family) || (family === "ipv6" && !PUBLIC_IPV6.check(address, family)));
   }
-  return RESERVED_NAMES.some((name) => host === name || host.endsWith(`.${name}`));
+  const names = publicOnly ? [...RESERVED_NAMES, ...PRIVATE_NAMES] : RESERVED_NAMES;
+  return names.some((name) => host === name || host.endsWith(`.${name}`));
 }
 
 function originCheck(setting: string, value: string | undefined, publicOnly = false): Check {
@@ -137,7 +142,11 @@ export async function checkDiscovery(issuer: string, request: typeof fetch = fet
     if (!Array.isArray(metadata.code_challenge_methods_supported) || !metadata.code_challenge_methods_supported.includes("S256")) return { ok: false, detail: "provider does not advertise PKCE S256" };
     const responseTypes = metadata.response_types_supported;
     if (!Array.isArray(responseTypes) || !responseTypes.includes("code")) return { ok: false, detail: "provider does not support the authorization code flow" };
-    return { ok: true, detail: "discovery document advertises the code flow and PKCE S256" };
+    // The host authenticates to the token endpoint with openid-client's default,
+    // client_secret_post. An absent list means client_secret_basic only.
+    const authMethods = metadata.token_endpoint_auth_methods_supported;
+    if (!Array.isArray(authMethods) || !authMethods.includes("client_secret_post")) return { ok: false, detail: "provider does not advertise client_secret_post token authentication" };
+    return { ok: true, detail: "discovery document advertises the code flow, PKCE S256 and client_secret_post" };
   } catch {
     return { ok: false, detail: "discovery document could not be fetched or parsed" };
   }

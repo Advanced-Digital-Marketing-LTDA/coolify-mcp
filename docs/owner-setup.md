@@ -45,4 +45,4 @@ Register this OIDC redirect URI: https://<your-mcp-host>/oauth/callback
 Connector MCP URL:              https://<your-mcp-host>/mcp
 ```
 
-Add `--discover` to also fetch the issuer's public discovery document and confirm it advertises the code flow and PKCE `S256`. This sends no credentials. The command exits non-zero until every check passes. A passing preflight does not deploy anything or approve Phase 4.
+Add `--discover` to also fetch the issuer's public discovery document and confirm it advertises the code flow, PKCE `S256` and `client_secret_post` token authentication (the method the bridge uses). This sends no credentials. The command exits non-zero until every check passes. A passing preflight does not deploy anything or approve Phase 4.
