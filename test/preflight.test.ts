@@ -45,6 +45,11 @@ describe("activation preflight", () => {
     ["MCP_PUBLIC_ORIGIN", "https://mcp.example.com"],
     ["MCP_PUBLIC_ORIGIN", "https://localhost"],
     ["MCP_PUBLIC_ORIGIN", "https://mcp.example.com."],
+    ["MCP_PUBLIC_ORIGIN", "https://127.0.0.1"],
+    ["MCP_PUBLIC_ORIGIN", "https://127.8.9.10"],
+    ["MCP_PUBLIC_ORIGIN", "https://[::1]"],
+    ["MCP_PUBLIC_ORIGIN", "https://[::ffff:127.0.0.1]"],
+    ["MCP_PUBLIC_ORIGIN", "https://0.0.0.0"],
     ["COOLIFY_ORIGIN", "https://coolify.test."],
     ["COOLIFY_TARGET_SERVER_NAME", "AI Agent"],
     ["COOLIFY_ORIGIN", "https://coolify.example.invalid"],
@@ -63,6 +68,11 @@ describe("activation preflight", () => {
     const env = { ...complete, [setting]: value };
     expect(statusOf(env, setting)).toBe("invalid");
     expect(runPreflight(env).ready).toBe(false);
+  });
+
+  it("accepts public IP literal origins", () => {
+    expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: "https://203.0.113.10" }, "MCP_PUBLIC_ORIGIN")).toBe("ok");
+    expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: "https://[2001:db8::1]" }, "MCP_PUBLIC_ORIGIN")).toBe("ok");
   });
 
   it("does not derive a callback from an invalid public origin", () => {

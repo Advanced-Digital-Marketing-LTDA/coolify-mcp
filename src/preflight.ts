@@ -1,3 +1,4 @@
+import { BlockList, isIP } from "node:net";
 import { basename } from "node:path";
 import { isHostedConfigured, isSafeCoolifyOrigin, isStableOwnerSubject, parseTrustedProxies, readRuntimeConfig } from "./config.js";
 
@@ -11,10 +12,20 @@ export type PreflightReport = Readonly<{ ready: boolean; checks: readonly Check[
 
 // RFC 2606/6761 names cannot be the final public or Coolify origin.
 const RESERVED_NAMES = ["invalid", "example", "test", "localhost", "local", "example.com", "example.net", "example.org"];
+// Loopback and unspecified IP literals are unreachable for remote clients.
+const LOCAL_ADDRESSES = new BlockList();
+LOCAL_ADDRESSES.addSubnet("127.0.0.0", 8, "ipv4");
+LOCAL_ADDRESSES.addSubnet("0.0.0.0", 8, "ipv4");
+LOCAL_ADDRESSES.addAddress("::1", "ipv6");
+LOCAL_ADDRESSES.addAddress("::", "ipv6");
+LOCAL_ADDRESSES.addSubnet("::ffff:127.0.0.0", 104, "ipv6");
 
 function isReservedHost(origin: string): boolean {
   // A fully qualified name may end in a root dot; it names the same host.
   const host = new URL(origin).hostname.toLowerCase().replace(/\.$/, "");
+  const address = host.replace(/^\[|\]$/g, "");
+  const version = isIP(address);
+  if (version) return LOCAL_ADDRESSES.check(address, version === 4 ? "ipv4" : "ipv6");
   return RESERVED_NAMES.some((name) => host === name || host.endsWith(`.${name}`));
 }
 
