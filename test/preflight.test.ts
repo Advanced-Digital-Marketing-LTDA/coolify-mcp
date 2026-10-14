@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseTrustedProxies } from "../src/config.js";
 import { APPROVED_SERVER_UUID, checkDiscovery, formatReport, runPreflight } from "../src/preflight.js";
 
+const OWNER_EMAIL = "owner@bridge-owner.dev";
 const secrets = { OIDC_CLIENT_SECRET: "synthetic-oidc-secret-value", COOLIFY_API_TOKEN: "synthetic-team-token-value", COOLIFY_OWNER_SUBJECT: "synthetic-owner-subject-value" };
 const complete = {
   ...secrets,
@@ -23,10 +24,10 @@ describe("activation preflight", () => {
   });
 
   it("never prints secret values or the owner subject", () => {
-    for (const env of [complete, { ...complete, COOLIFY_OWNER_SUBJECT: "owner@bridge-owner.dev" }, { ...secrets }]) {
+    for (const env of [complete, { ...complete, COOLIFY_OWNER_SUBJECT: OWNER_EMAIL }, { ...secrets }]) {
       const output = formatReport(runPreflight(env));
       for (const value of Object.values(secrets)) expect(output).not.toContain(value);
-      expect(output).not.toContain("owner@bridge-owner.dev");
+      expect(output).not.toContain(OWNER_EMAIL);
     }
   });
 
@@ -63,7 +64,7 @@ describe("activation preflight", () => {
     ["OIDC_ISSUER", "https://issuer.test"],
     ["OIDC_ISSUER", "https://localhost/"],
     ["OIDC_ISSUER", "https://login.bridge-owner.dev/?tenant=x"],
-    ["COOLIFY_OWNER_SUBJECT", "owner@bridge-owner.dev"],
+    ["COOLIFY_OWNER_SUBJECT", OWNER_EMAIL],
     ["COOLIFY_TARGET_SERVER_UUID", "another-server-uuid"],
     ["MCP_TRUSTED_PROXY_CIDRS", "0.0.0.0/0x"],
     ["MCP_TRUSTED_PROXY_CIDRS", "2"],
@@ -118,7 +119,8 @@ describe("trusted proxy parsing", () => {
 describe("issuer discovery check", () => {
   const issuer = "https://login.bridge-owner.dev/realms/owner";
   const respond = (body: unknown, status = 200) => vi.fn(async (_url: URL | RequestInfo, _init?: RequestInit) => new Response(JSON.stringify(body), { status }));
-  const good = { issuer, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"] };
+  const noAuthMethods = { issuer, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] };
+  const good = { ...noAuthMethods, token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"] };
 
   it("fetches the well-known document without credentials or redirects", async () => {
     const request = respond(good);
@@ -136,7 +138,7 @@ describe("issuer discovery check", () => {
     [{ ...good, code_challenge_methods_supported: ["plain"] }, /PKCE S256/],
     [{ ...good, response_types_supported: ["id_token"] }, /authorization code/],
     [{ ...good, token_endpoint_auth_methods_supported: ["client_secret_basic"] }, /client_secret_post/],
-    [{ ...good, token_endpoint_auth_methods_supported: undefined }, /client_secret_post/],
+    [noAuthMethods, /client_secret_post/],
   ])("rejects unsuitable providers", async (body, message) => {
     const result = await checkDiscovery(issuer, respond(body) as typeof fetch);
     expect(result.ok).toBe(false);

@@ -48,7 +48,7 @@ for (const [net, prefix] of [["2001::", 23], ["3fff::", 20], ["5f00::", 16]] as 
 function isReservedHost(origin: string, publicOnly = false): boolean {
   // A fully qualified name may end in a root dot; it names the same host.
   const host = new URL(origin).hostname.toLowerCase().replace(/\.$/, "");
-  const address = host.replace(/^\[|\]$/g, "");
+  const address = host.replaceAll(/^\[|\]$/g, "");
   const version = isIP(address);
   if (version) {
     const family = version === 4 ? "ipv4" : "ipv6";
@@ -143,6 +143,15 @@ export function formatReport(report: PreflightReport): string {
 
 type DiscoveryResult = Readonly<{ ok: boolean; detail: string }>;
 
+function normalizedIssuer(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    return new URL(value).href;
+  } catch {
+    return null;
+  }
+}
+
 /** Optional online check of the issuer's public discovery document; sends no credentials. */
 export async function checkDiscovery(issuer: string, request: typeof fetch = fetch): Promise<DiscoveryResult> {
   const base = new URL(issuer);
@@ -152,9 +161,7 @@ export async function checkDiscovery(issuer: string, request: typeof fetch = fet
     if (!response.ok) return { ok: false, detail: `discovery returned HTTP ${response.status}` };
     const metadata = await response.json() as Record<string, unknown>;
     // Match openid-client's startup check exactly: URL-normalized, otherwise byte-equal.
-    let advertised: string | undefined;
-    try { advertised = typeof metadata.issuer === "string" ? new URL(metadata.issuer).href : undefined; } catch { advertised = undefined; }
-    if (advertised !== new URL(issuer).href) return { ok: false, detail: "discovery issuer does not match OIDC_ISSUER" };
+    if (normalizedIssuer(metadata.issuer) !== new URL(issuer).href) return { ok: false, detail: "discovery issuer does not match OIDC_ISSUER" };
     if (!Array.isArray(metadata.code_challenge_methods_supported) || !metadata.code_challenge_methods_supported.includes("S256")) return { ok: false, detail: "provider does not advertise PKCE S256" };
     const responseTypes = metadata.response_types_supported;
     if (!Array.isArray(responseTypes) || !responseTypes.includes("code")) return { ok: false, detail: "provider does not support the authorization code flow" };
