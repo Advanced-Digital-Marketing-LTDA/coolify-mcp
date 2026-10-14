@@ -93,7 +93,10 @@ export async function checkDiscovery(issuer: string, request: typeof fetch = fet
     const response = await request(url, { redirect: "error", signal: AbortSignal.timeout(10_000), headers: { Accept: "application/json" } });
     if (!response.ok) return { ok: false, detail: `discovery returned HTTP ${response.status}` };
     const metadata = await response.json() as Record<string, unknown>;
-    if (metadata.issuer !== issuer && metadata.issuer !== issuer.replace(/\/$/, "")) return { ok: false, detail: "discovery issuer does not match OIDC_ISSUER" };
+    // Match openid-client's startup check exactly: URL-normalized, otherwise byte-equal.
+    let advertised: string | undefined;
+    try { advertised = typeof metadata.issuer === "string" ? new URL(metadata.issuer).href : undefined; } catch { advertised = undefined; }
+    if (advertised !== new URL(issuer).href) return { ok: false, detail: "discovery issuer does not match OIDC_ISSUER" };
     if (!Array.isArray(metadata.code_challenge_methods_supported) || !metadata.code_challenge_methods_supported.includes("S256")) return { ok: false, detail: "provider does not advertise PKCE S256" };
     const responseTypes = metadata.response_types_supported;
     if (!Array.isArray(responseTypes) || !responseTypes.includes("code")) return { ok: false, detail: "provider does not support the authorization code flow" };

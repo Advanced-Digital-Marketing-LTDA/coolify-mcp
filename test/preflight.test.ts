@@ -97,12 +97,19 @@ describe("issuer discovery check", () => {
 
   it.each([
     [{ ...good, issuer: "https://other.bridge-owner.dev" }, /issuer does not match/],
+    [{ ...good, issuer: `${issuer}/` }, /issuer does not match/],
+    [{ ...good, issuer: 42 }, /issuer does not match/],
     [{ ...good, code_challenge_methods_supported: ["plain"] }, /PKCE S256/],
     [{ ...good, response_types_supported: ["id_token"] }, /authorization code/],
   ])("rejects unsuitable providers", async (body, message) => {
     const result = await checkDiscovery(issuer, respond(body) as typeof fetch);
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(message);
+  });
+
+  it("accepts a bare-origin issuer with or without its trailing slash, as openid-client does", async () => {
+    const origin = "https://login.bridge-owner.dev";
+    await expect(checkDiscovery(`${origin}/`, respond({ ...good, issuer: origin }) as typeof fetch)).resolves.toMatchObject({ ok: true });
   });
 
   it("reports HTTP and network failures without echoing details", async () => {
