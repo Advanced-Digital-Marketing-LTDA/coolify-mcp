@@ -1,0 +1,10 @@
+# Allowlist: credentials, fixtures, Git history and local outputs never enter the build context.
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**
+!docker/
+!docker/healthcheck.mjs

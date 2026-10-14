@@ -11,6 +11,8 @@
     "start": "node dist/src/host.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke": "npm run build && node test/smoke/run.mjs",
+    "smoke:docker": "sh test/smoke/docker.sh",
     "mutation": "stryker run",
     "ci": "npm run build && npm test && npm run mutation"
   },
