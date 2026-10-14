@@ -42,8 +42,8 @@ const PUBLIC_IPV6 = new BlockList();
 PUBLIC_IPV6.addSubnet("2000::", 3, "ipv6");
 PUBLIC_IPV6.addSubnet("::ffff:0:0", 96, "ipv6");
 // Non-global special-purpose blocks inside 2000::/3 (IANA IPv6 registry):
-// IETF protocol assignments, documentation and SRv6 SIDs.
-for (const [net, prefix] of [["2001::", 23], ["3fff::", 20], ["5f00::", 16]] as const) PRIVATE_ADDRESSES.addSubnet(net, prefix, "ipv6");
+// IETF protocol assignments, 6to4, documentation and SRv6 SIDs.
+for (const [net, prefix] of [["2001::", 23], ["2002::", 16], ["3fff::", 20], ["5f00::", 16]] as const) PRIVATE_ADDRESSES.addSubnet(net, prefix, "ipv6");
 
 function isReservedHost(origin: string, publicOnly = false): boolean {
   // A fully qualified name may end in a root dot; it names the same host.
@@ -143,6 +143,10 @@ export function formatReport(report: PreflightReport): string {
 
 type DiscoveryResult = Readonly<{ ok: boolean; detail: string }>;
 
+function isHttpsUrl(value: unknown): boolean {
+  return typeof value === "string" && URL.canParse(value) && new URL(value).protocol === "https:";
+}
+
 function normalizedIssuer(value: unknown): string | null {
   if (typeof value !== "string") return null;
   try {
@@ -162,6 +166,7 @@ export async function checkDiscovery(issuer: string, request: typeof fetch = fet
     const metadata = await response.json() as Record<string, unknown>;
     // Match openid-client's startup check exactly: URL-normalized, otherwise byte-equal.
     if (normalizedIssuer(metadata.issuer) !== new URL(issuer).href) return { ok: false, detail: "discovery issuer does not match OIDC_ISSUER" };
+    if (!isHttpsUrl(metadata.authorization_endpoint) || !isHttpsUrl(metadata.token_endpoint)) return { ok: false, detail: "provider does not advertise HTTPS authorization and token endpoints" };
     if (!Array.isArray(metadata.code_challenge_methods_supported) || !metadata.code_challenge_methods_supported.includes("S256")) return { ok: false, detail: "provider does not advertise PKCE S256" };
     const responseTypes = metadata.response_types_supported;
     if (!Array.isArray(responseTypes) || !responseTypes.includes("code")) return { ok: false, detail: "provider does not support the authorization code flow" };
