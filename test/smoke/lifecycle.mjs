@@ -18,19 +18,27 @@ export async function verifyHostedChild(host, check, shutdownMs = 5000) {
     abort.abort();
     throw new Error(`Smoke host exited before checks completed (code=${code}, signal=${signal})`);
   });
-  let passed = false;
+  let checkFailed = false;
+  let checkError;
   try {
     await Promise.race([Promise.resolve().then(() => check(abort.signal)), prematureExit]);
-    passed = true;
-  } finally {
+  } catch (error) {
+    checkFailed = true;
+    checkError = error;
+  }
+  let cleanupFailed = false;
+  let cleanupError;
+  let deadline;
+  try {
     abort.abort();
     if (host.exitCode === null && host.signalCode === null) host.kill("SIGTERM");
-    const deadline = setTimeout(() => host.kill("SIGKILL"), shutdownMs);
-    try {
-      const status = await stopped;
-      if (passed) assert.deepEqual(status, [0, null], "Host did not shut down cleanly on SIGTERM");
-    } catch (error) {
-      if (passed) throw error;
-    } finally { clearTimeout(deadline); }
-  }
+    deadline = setTimeout(() => host.kill("SIGKILL"), shutdownMs);
+    const status = await stopped;
+    if (!checkFailed) assert.deepEqual(status, [0, null], "Host did not shut down cleanly on SIGTERM");
+  } catch (error) {
+    cleanupFailed = true;
+    cleanupError = error;
+  } finally { clearTimeout(deadline); }
+  if (checkFailed) throw checkError;
+  if (cleanupFailed) throw cleanupError;
 }
