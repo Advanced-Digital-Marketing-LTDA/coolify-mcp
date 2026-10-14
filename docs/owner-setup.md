@@ -11,7 +11,7 @@ Record these non-secret decisions in the tracker:
 | Decision | Rule |
 | --- | --- |
 | `MCP_PUBLIC_ORIGIN` | Final `https://host` the connector will use. No path, query, credentials or port. Do not reuse the cleartext dashboard address; reserved names such as `*.example.com`, `*.test` and `localhost` are rejected. |
-| OIDC provider and `OIDC_ISSUER` | HTTPS issuer URL exactly as the provider's discovery document states it. The provider must advertise the authorization code flow and PKCE `S256`. |
+| OIDC provider and `OIDC_ISSUER` | HTTPS issuer URL exactly as the provider's discovery document states it; reserved and local hostnames are rejected. The provider must advertise the authorization code flow and PKCE `S256`. |
 | `OIDC_CLIENT_ID` | A confidential web client registered for this bridge only. |
 | Redirect URI | Register exactly `<MCP_PUBLIC_ORIGIN>/oauth/callback` with the client. The preflight prints the exact value. |
 | `COOLIFY_OWNER_SUBJECT` | The owner's stable `sub` claim, never an email. Some providers issue a different subject per client, so read it from an ID token issued to this exact client. It is not a credential, but keep it with the secrets so it is not published. |

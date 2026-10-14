@@ -47,8 +47,9 @@ export function runPreflight(env: NodeJS.ProcessEnv = process.env): PreflightRep
     publicOrigin,
     originCheck("COOLIFY_ORIGIN", env.COOLIFY_ORIGIN),
     !issuer ? { setting: "OIDC_ISSUER", status: "missing", detail: "set the provider's HTTPS issuer URL" }
-      : config.oidcIssuer ? { setting: "OIDC_ISSUER", status: "ok", detail: config.oidcIssuer }
-        : { setting: "OIDC_ISSUER", status: "invalid", detail: "must be an HTTPS URL without credentials, query or fragment" },
+      : !config.oidcIssuer ? { setting: "OIDC_ISSUER", status: "invalid", detail: "must be an HTTPS URL without credentials, query or fragment" }
+        : isReservedHost(config.oidcIssuer) ? { setting: "OIDC_ISSUER", status: "invalid", detail: "reserved example or local hostname" }
+          : { setting: "OIDC_ISSUER", status: "ok", detail: config.oidcIssuer },
     env.OIDC_CLIENT_ID?.trim() ? { setting: "OIDC_CLIENT_ID", status: "ok", detail: env.OIDC_CLIENT_ID.trim() }
       : { setting: "OIDC_CLIENT_ID", status: "missing", detail: "set the confidential client ID" },
     hiddenCheck("OIDC_CLIENT_SECRET", env.OIDC_CLIENT_SECRET),
