@@ -1,6 +1,8 @@
 export default {
   testRunner: "command",
-  commandRunner: { command: "npm test" },
+  // A mutant is detected by its first failed assertion. Stop there so later
+  // approval-round-trip tests do not spend their deadlines on the same fault.
+  commandRunner: { command: "npm test -- --bail=1 --maxWorkers=2" },
   checkers: ["typescript"],
   tsconfigFile: "tsconfig.json",
   reporters: ["clear-text", "progress", "html", "json"],

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { OwnerIdentityGate, UnconfiguredIdentityProvider, type VerifiedIdentityProvider } from "../src/identity.js";
 import { AccessDeniedError, NotConfiguredError, ResourceScopeError } from "../src/errors.js";
-import { isActivated, isSafeCoolifyOrigin, readRuntimeConfig } from "../src/config.js";
+import { isActivated, isHostedConfigured, isSafeCoolifyOrigin, readRuntimeConfig } from "../src/config.js";
 import { requirePinnedServer, requireResourceOnTarget, requireSingleServerApplication, safeDetails, safeFilteredResource, safeVerifiedDetails, serverUuidOf, uuidOf } from "../src/scope.js";
 import { ConfigurationWritePolicy } from "../src/policy.js";
 import { FakeCoolify, otherServer, targetServer, appTarget } from "./fixtures.js";
@@ -16,7 +16,7 @@ describe("owner identity gate", () => {
   it("does not auto-enroll when the owner is not pinned or identity provider is absent", async () => {
     await expect(new OwnerIdentityGate(undefined, provider).requireOwner(undefined)).rejects.toThrow("Pinned non-email owner subject is not configured");
     await expect(new OwnerIdentityGate("owner@example.test", provider).requireOwner(undefined)).rejects.toThrow("Pinned non-email owner subject is not configured");
-    await expect(new OwnerIdentityGate("owner-immutable-id", new UnconfiguredIdentityProvider()).requireOwner(undefined)).rejects.toThrow("Verified Sites identity is not configured");
+    await expect(new OwnerIdentityGate("owner-immutable-id", new UnconfiguredIdentityProvider()).requireOwner(undefined)).rejects.toThrow("Verified OAuth owner identity is not configured");
     await expect(new OwnerIdentityGate("owner@example.test", { resolve: async () => ({ subject: "owner@example.test" }) }).requireOwner(undefined)).rejects.toBeInstanceOf(NotConfiguredError);
   });
 });
@@ -45,6 +45,7 @@ describe("activation and server pin", () => {
     expect(isSafeCoolifyOrigin("https://coolify.example.test/arbitrary/path")).toBe(false);
     expect(isSafeCoolifyOrigin("https://coolify.example.test/?x=1")).toBe(false);
     expect(isSafeCoolifyOrigin("https://coolify.example.test:8443")).toBe(false);
+    expect(isSafeCoolifyOrigin("https://coolify.example.test/")).toBe(true);
     expect(isSafeCoolifyOrigin("not-a-url")).toBe(false);
     expect(readRuntimeConfig({})).toEqual({});
     expect(readRuntimeConfig({
@@ -66,6 +67,29 @@ describe("activation and server pin", () => {
       targetServerUuid: "server-target",
       apiToken: "synthetic-token",
     });
+    expect(readRuntimeConfig({
+      MCP_PUBLIC_ORIGIN: "https://mcp.example.test",
+      OIDC_ISSUER: "https://identity.example.test/tenant",
+      OIDC_CLIENT_ID: " client-id ",
+      OIDC_CLIENT_SECRET: " synthetic-secret ",
+    })).toEqual({ publicOrigin: "https://mcp.example.test", oidcIssuer: "https://identity.example.test/tenant", oidcClientId: "client-id", oidcClientSecret: "synthetic-secret" });
+    expect(readRuntimeConfig({ OIDC_ISSUER: "http://identity.example.test" })).toEqual({});
+    expect(readRuntimeConfig({ OIDC_ISSUER: "https://[invalid" })).toEqual({});
+    expect(readRuntimeConfig({ OIDC_CLIENT_ID: " ", OIDC_CLIENT_SECRET: " " })).toEqual({});
+    for (const issuer of ["https://user:pass@identity.example.test", "https://identity.example.test?tenant=x", "https://identity.example.test#tenant"]) {
+      expect(readRuntimeConfig({ OIDC_ISSUER: issuer }).oidcIssuer).toBeUndefined();
+    }
+  });
+
+  it("requires the final trusted HTTPS origin and configured OIDC client for hosted activation", () => {
+    const ready = { origin: "https://coolify.example.test", publicOrigin: "https://mcp.example.test", oidcIssuer: "https://id.example.test/tenant", oidcClientId: "client", oidcClientSecret: "synthetic-secret", targetServerName: "AI Agents", targetServerUuid: "pcrionkfci16zmkssngc6vaa", ownerSubject: "owner-subject", apiToken: "synthetic-token" };
+    expect(isHostedConfigured(ready)).toBe(true);
+    expect(isHostedConfigured({ ...ready, publicOrigin: "http://169.58.185.96:8000" })).toBe(false);
+    expect(isHostedConfigured({ ...ready, oidcClientSecret: "" })).toBe(false);
+    expect(isHostedConfigured({ ...ready, oidcIssuer: "" })).toBe(false);
+    expect(isHostedConfigured({ ...ready, oidcClientId: " " })).toBe(false);
+    expect(isHostedConfigured({ ...ready, oidcClientSecret: " " })).toBe(false);
+    expect(isHostedConfigured({ ...ready, ownerSubject: "owner@example.test" })).toBe(false);
   });
   it("requires the pinned UUID to resolve uniquely to the configured server name", async () => {
     const provider = new FakeCoolify();
@@ -140,6 +164,9 @@ describe("activation and server pin", () => {
     expect(details.fqdn.every((value) => typeof value === "string")).toBe(true);
     const commaSeparated = safeDetails({ ...appTarget, fqdn: " https://one.example.test , ,https://two.example.test " }, "application", "server-target");
     expect(commaSeparated.fqdn).toEqual(["https://one.example.test", "https://two.example.test"]);
+    const tooManyCommaSeparated = safeDetails({ ...appTarget, fqdn: Array.from({ length: 12 }, (_, index) => `https://host-${index}.example.test`).join(",") }, "application", "server-target");
+    expect(tooManyCommaSeparated.fqdn).toHaveLength(10);
+    expect(safeDetails({ ...appTarget, name: "", project_name: "" }, "application", "server-target").name).toBe("Unnamed resource");
   });
 });
 
