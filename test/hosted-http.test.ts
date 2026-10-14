@@ -131,6 +131,22 @@ describe("hosted MCP over real HTTP", () => {
     expect(field.enum).not.toContain("is_force_https_enabled");
   });
 
+  it("allows a direct loopback health probe without the public Host", async () => {
+    fixture = await httpFixture();
+    const response = await fixture.request("/healthz", { headers: { Host: fixture.localHealthHost } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "ok" });
+    expect(fixture.provider.writes).toHaveLength(0);
+    expect((await fixture.request("/mcp", { headers: { Host: fixture.localHealthHost } })).status).toBe(403);
+  });
+
+  it("rejects non-loopback and browser probes using a local Host", async () => {
+    fixture = await httpFixture();
+    expect((await fixture.request("/healthz", { headers: { Host: fixture.localHealthHost, Origin: "https://chatgpt.com" } })).status).toBe(403);
+    fixture.clientSourceAddress.value = "127.0.0.2";
+    expect((await fixture.request("/healthz", { headers: { Host: fixture.localHealthHost, "X-Forwarded-For": "127.0.0.1" } })).status).toBe(403);
+  });
+
   it("shuts down an active HTTP event stream without waiting for the client to disconnect", async () => {
     fixture = await httpFixture();
     const { tokens } = await fixture.login();
@@ -298,6 +314,19 @@ describe("hosted MCP over real HTTP", () => {
     const { tokens } = await fixture.login();
     const { client } = await connect(tokens.access_token, answer);
     const result = await client.callTool({ name: "coolify_update_application_configuration", arguments: { applicationUuid: "app-alpha", field: "description", value: "safe" } });
+    expect(result.isError).toBe(true);
+    expect(answer).not.toHaveBeenCalled();
+    expect(fixture.writes).toHaveLength(0);
+  });
+
+  it.each(["proposed", "stored"])("denies shell-significant %s health-check paths before confirmation or upstream write", async (source) => {
+    fixture = await httpFixture();
+    const unsafePath = "/health;fixture";
+    fixture.provider.collections.application = fixture.provider.collections.application.map((row) => ({ ...row, health_check_path: source === "stored" ? unsafePath : "/health" }));
+    const answer = vi.fn(async () => ({ action: "accept" as const, content: { confirmation: "unused" } }));
+    const { tokens } = await fixture.login();
+    const { client } = await connect(tokens.access_token, answer);
+    const result = await client.callTool({ name: "coolify_update_application_configuration", arguments: { applicationUuid: "app-alpha", field: "health_check_path", value: source === "proposed" ? unsafePath : "/ready" } });
     expect(result.isError).toBe(true);
     expect(answer).not.toHaveBeenCalled();
     expect(fixture.writes).toHaveLength(0);

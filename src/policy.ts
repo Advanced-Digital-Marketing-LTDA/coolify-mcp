@@ -38,6 +38,6 @@ export function validateApplicationConfig(field: string, value: unknown): value 
   if (BOOLEAN_FIELDS.has(key)) return typeof value === "boolean";
   if (typeof value !== "string" || value.length > 2_000 || /[\u0000-\u001f\u007f\u2028-\u202e\u2066-\u2069]/.test(value)) return false;
   if (key === PORTS_FIELD) return value === "" || (/^\d+(,\d+)*$/.test(value) && value.split(",").every((port) => Number(port) >= 1 && Number(port) <= 65_535));
-  if (key === "health_check_path") return value === "" || (value.startsWith("/") && !value.includes("..") && !value.includes("://"));
+  if (key === "health_check_path") return value === "" || (/^\/[A-Za-z0-9._~\/-]*$/.test(value) && !value.includes(".."));
   return true;
 }

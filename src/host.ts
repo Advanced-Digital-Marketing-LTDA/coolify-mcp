@@ -42,6 +42,15 @@ export async function createHostedApp(env: NodeJS.ProcessEnv = process.env) {
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", trustedProxies);
+  // Container probes have no public Host. Admit only direct loopback peers,
+  // a literal local Host on this listener, and no browser Origin.
+  app.get("/healthz", (req, res, next) => {
+    const localPeer = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress ?? "");
+    const port = req.socket.localPort;
+    const localHost = [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`].includes(req.headers.host ?? "");
+    if (localPeer && localHost && req.headers.origin === undefined) { res.json({ status: "ok" }); return; }
+    next();
+  });
   // Validate the direct Host, never caller-supplied forwarding headers. The TLS
   // proxy must preserve the public Host. Browser requests use these fixed origins.
   const host = new URL(config.publicOrigin!).host;

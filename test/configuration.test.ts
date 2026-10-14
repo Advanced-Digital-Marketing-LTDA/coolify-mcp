@@ -34,6 +34,34 @@ describe("application configuration writes", () => {
     await expect(writer.update("app-one", "name", "safe")).rejects.toThrow(/did not match/);
   });
 
+  it.each(["deadline", "caller"])("bounds the PATCH with a 30-second deadline and caller cancellation: %s", async (source) => {
+    const caller = new AbortController();
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    let observed: AbortSignal | undefined;
+    const request = vi.fn((_input: URL | RequestInfo, init?: RequestInit) => {
+      observed = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => observed?.addEventListener("abort", () => reject(new Error("Synthetic request aborted")), { once: true }));
+    });
+    try {
+      const writer = new CoolifyApplicationConfigWriter("https://coolify.example.test", "synthetic-token", request as typeof fetch);
+      const pending = writer.update("app-one", "name", "safe", caller.signal);
+      expect(observed).toBeDefined();
+      expect(timeout).toHaveBeenCalledWith(30_000);
+      (source === "caller" ? caller : deadline).abort();
+      await expect(pending).rejects.toThrow("Synthetic request aborted");
+    } finally { timeout.mockRestore(); }
+  });
+
+  it("refuses a cancelled configuration write before opening an upstream request", async () => {
+    const caller = new AbortController();
+    caller.abort();
+    const request = vi.fn();
+    const writer = new CoolifyApplicationConfigWriter("https://coolify.example.test", "synthetic-token", request as typeof fetch);
+    await expect(writer.update("app-one", "name", "safe", caller.signal)).rejects.toThrow();
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it("cancels an upstream error body without reading sensitive content", async () => {
     const cancel = vi.fn();
     const body = new ReadableStream({ cancel });
@@ -47,6 +75,14 @@ describe("application configuration writes", () => {
     const request = vi.fn(async () => new Response("x".repeat(5_000), { status: 200 }));
     const writer = new CoolifyApplicationConfigWriter("https://coolify.example.test", "synthetic-token", request as typeof fetch);
     await expect(writer.update("app-one", "name", "safe")).rejects.toThrow("response was invalid");
+  });
+
+  it.each(["/health;fixture", "/$(fixture)", "/`fixture`", "/health|fixture", "/health&fixture", "/health>fixture", "/health<fixture", "/health'fixture", '/health"fixture', "/health fixture", "/health\\fixture", "/health?query=value", "/health#fragment", "/%24%28fixture%29"])("rejects shell-significant or ambiguous health-check paths: %s", (path) => {
+    expect(validateApplicationConfig("health_check_path", path)).toBe(false);
+  });
+
+  it.each(["/", "/health", "/health/ready", "/health-check_v1.0~ready"])("permits literal unreserved health-check paths: %s", (path) => {
+    expect(validateApplicationConfig("health_check_path", path)).toBe(true);
   });
 
   it("validates every allowlisted field type and value boundary", () => {

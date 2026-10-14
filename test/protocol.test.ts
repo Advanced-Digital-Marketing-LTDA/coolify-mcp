@@ -193,7 +193,7 @@ describe("published MCP protocol and schemas", () => {
     try {
       const result = await client.callTool({ name: "coolify_update_application_configuration", arguments: { applicationUuid: "app-alpha", field: "description", value: "New description" } });
       expect(result.structuredContent).toEqual({ accepted: true, applicationUuid: "app-alpha", field: "description", message: "Application configuration update accepted" });
-      expect(updates).toEqual([["app-alpha", "description", "New description"]]);
+      expect(updates).toEqual([["app-alpha", "description", "New description", expect.any(AbortSignal)]]);
       expect(elicitationRequests[0]?.params.message).toContain('description "Synthetic app" -> "New description"');
       expect(elicitationRequests[0]?.params.message).toContain('Type exactly: CONFIGURE app-alpha description "Synthetic app" -> "New description"');
       expect(elicitationRequests[0]?.params.requestedSchema).toEqual({ type: "object", properties: { confirmation: { type: "string", title: "Type the exact application change" } }, required: ["confirmation"] });

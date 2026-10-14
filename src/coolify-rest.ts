@@ -6,13 +6,17 @@ import { validateApplicationConfig, type ApplicationConfigField, type Applicatio
 export class CoolifyApplicationConfigWriter {
   constructor(private readonly origin: string | undefined, private readonly token: string | undefined, private readonly request: typeof fetch = fetch) {}
 
-  async update(uuid: string, field: ApplicationConfigField, value: ApplicationConfigValue): Promise<void> {
+  async update(uuid: string, field: ApplicationConfigField, value: ApplicationConfigValue, signal?: AbortSignal): Promise<void> {
     if (!isSafeCoolifyOrigin(this.origin) || !this.token?.trim()) throw new NotConfiguredError("Coolify application configuration writer is not configured");
     if (!/^[A-Za-z0-9-]{1,128}$/.test(uuid) || !validateApplicationConfig(field, value)) throw new Error("Invalid application configuration request");
     const url = new URL(`/api/v1/applications/${encodeURIComponent(uuid)}`, this.origin);
+    const timeout = AbortSignal.timeout(30_000);
+    const boundedSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    boundedSignal.throwIfAborted();
     const response = await this.request(url, {
       method: "PATCH",
       redirect: "error",
+      signal: boundedSignal,
       headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ [field]: value }),
     });

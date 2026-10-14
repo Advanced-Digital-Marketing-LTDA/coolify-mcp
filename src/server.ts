@@ -242,7 +242,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     await requireSingleServerApplication(provider, applicationUuid, config.targetServerUuid!);
     await gate.requireOwner(extra.authInfo);
     extra.signal.throwIfAborted();
-    await dependencies.configWriter.update(applicationUuid, field, value);
+    await dependencies.configWriter.update(applicationUuid, field, value, extra.signal);
     return { accepted: true, applicationUuid, field, message: "Application configuration update accepted" };
   }));
 

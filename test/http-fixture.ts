@@ -135,7 +135,7 @@ export async function httpFixture() {
     if (response.status !== 200) throw new Error(`Token exchange failed: ${response.status}`);
     return { client, tokens: await response.json() as { access_token: string; refresh_token: string; expires_in: number }, grant };
   }
-  return { provider, writes, request, register, authorize, code, login, tokenRequest, claimsOverride, idpBehavior, clientSourceAddress, verifier,
+  return { provider, writes, request, register, authorize, code, login, tokenRequest, claimsOverride, idpBehavior, clientSourceAddress, verifier, localHealthHost: new URL(host.origin).host,
     shutdown: () => closeHostedListener(host.server, hosted.close),
     close: async () => { await hosted.close(); await closeServer(host.server); await closeServer(identityHost.server); vi.restoreAllMocks(); } };
 }
