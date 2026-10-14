@@ -40,6 +40,7 @@ export function runPreflight(env: NodeJS.ProcessEnv = process.env): PreflightRep
   const issuer = env.OIDC_ISSUER?.trim();
   const config = readRuntimeConfig(env);
   const uuid = env.COOLIFY_TARGET_SERVER_UUID?.trim();
+  const proxies = parseTrustedProxies(env.MCP_TRUSTED_PROXY_CIDRS);
   const checks: Check[] = [
     publicOrigin,
     originCheck("COOLIFY_ORIGIN", env.COOLIFY_ORIGIN),
@@ -57,10 +58,15 @@ export function runPreflight(env: NodeJS.ProcessEnv = process.env): PreflightRep
       : uuid === APPROVED_SERVER_UUID ? { setting: "COOLIFY_TARGET_SERVER_UUID", status: "ok", detail: uuid }
         : { setting: "COOLIFY_TARGET_SERVER_UUID", status: "invalid", detail: "differs from the owner-approved server" },
     !env.MCP_TRUSTED_PROXY_CIDRS?.trim() ? { setting: "MCP_TRUSTED_PROXY_CIDRS", status: "missing", detail: "set the ingress peer IPs/CIDRs" }
-      : parseTrustedProxies(env.MCP_TRUSTED_PROXY_CIDRS) ? { setting: "MCP_TRUSTED_PROXY_CIDRS", status: "ok", detail: parseTrustedProxies(env.MCP_TRUSTED_PROXY_CIDRS)!.join(",") }
+      : proxies ? { setting: "MCP_TRUSTED_PROXY_CIDRS", status: "ok", detail: proxies.join(",") }
         : { setting: "MCP_TRUSTED_PROXY_CIDRS", status: "invalid", detail: "use at most 32 explicit IPs/CIDRs; no wildcards or hop counts" },
   ];
-  const ready = checks.every((check) => check.status === "ok") && isHostedConfigured(config);
+  // Backstop: if the runtime gate ever disagrees with the checks above, say so
+  // rather than failing with every line green.
+  if (checks.every((check) => check.status === "ok") && !isHostedConfigured(config)) {
+    checks.push({ setting: "ACTIVATION_GATE", status: "invalid", detail: "settings pass individually but the runtime activation gate rejects them" });
+  }
+  const ready = checks.every((check) => check.status === "ok");
   const origin = publicOrigin.status === "ok" ? publicOrigin.detail : undefined;
   return {
     ready,
@@ -70,7 +76,7 @@ export function runPreflight(env: NodeJS.ProcessEnv = process.env): PreflightRep
 }
 
 export function formatReport(report: PreflightReport): string {
-  const width = Math.max(...report.checks.map((check) => check.setting.length));
+  const width = report.checks.reduce((max, check) => Math.max(max, check.setting.length), 0);
   const lines = report.checks.map((check) => `${check.status.padEnd(7)} ${check.setting.padEnd(width)}  ${check.detail}`);
   if (report.oidcCallbackUri) lines.push("", `Register this OIDC redirect URI: ${report.oidcCallbackUri}`, `Connector MCP URL:              ${report.mcpUrl}`);
   lines.push("", report.ready ? "Preflight passed. Activation settings are complete; deployment still needs owner approval." : "Preflight failed. Fix the settings above before activation.");
