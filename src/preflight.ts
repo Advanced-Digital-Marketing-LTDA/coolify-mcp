@@ -3,6 +3,7 @@ import { isHostedConfigured, isSafeCoolifyOrigin, isStableOwnerSubject, parseTru
 
 /** The owner-approved AI Agents server; the bridge must stay pinned to it. */
 export const APPROVED_SERVER_UUID = "pcrionkfci16zmkssngc6vaa";
+export const APPROVED_SERVER_NAME = "AI Agents";
 
 export type CheckStatus = "ok" | "missing" | "invalid";
 export type Check = Readonly<{ setting: string; status: CheckStatus; detail: string }>;
@@ -12,7 +13,8 @@ export type PreflightReport = Readonly<{ ready: boolean; checks: readonly Check[
 const RESERVED_NAMES = ["invalid", "example", "test", "localhost", "local", "example.com", "example.net", "example.org"];
 
 function isReservedHost(origin: string): boolean {
-  const host = new URL(origin).hostname.toLowerCase();
+  // A fully qualified name may end in a root dot; it names the same host.
+  const host = new URL(origin).hostname.toLowerCase().replace(/\.$/, "");
   return RESERVED_NAMES.some((name) => host === name || host.endsWith(`.${name}`));
 }
 
@@ -52,8 +54,9 @@ export function runPreflight(env: NodeJS.ProcessEnv = process.env): PreflightRep
     hiddenCheck("OIDC_CLIENT_SECRET", env.OIDC_CLIENT_SECRET),
     hiddenCheck("COOLIFY_OWNER_SUBJECT", env.COOLIFY_OWNER_SUBJECT, isStableOwnerSubject, "must be the stable OIDC sub claim, not an email"),
     hiddenCheck("COOLIFY_API_TOKEN", env.COOLIFY_API_TOKEN),
-    env.COOLIFY_TARGET_SERVER_NAME?.trim() ? { setting: "COOLIFY_TARGET_SERVER_NAME", status: "ok", detail: env.COOLIFY_TARGET_SERVER_NAME.trim() }
-      : { setting: "COOLIFY_TARGET_SERVER_NAME", status: "missing", detail: "set the approved server name" },
+    !env.COOLIFY_TARGET_SERVER_NAME?.trim() ? { setting: "COOLIFY_TARGET_SERVER_NAME", status: "missing", detail: `set ${APPROVED_SERVER_NAME}` }
+      : env.COOLIFY_TARGET_SERVER_NAME.trim() === APPROVED_SERVER_NAME ? { setting: "COOLIFY_TARGET_SERVER_NAME", status: "ok", detail: APPROVED_SERVER_NAME }
+        : { setting: "COOLIFY_TARGET_SERVER_NAME", status: "invalid", detail: "differs from the owner-approved server name" },
     !uuid ? { setting: "COOLIFY_TARGET_SERVER_UUID", status: "missing", detail: `set ${APPROVED_SERVER_UUID}` }
       : uuid === APPROVED_SERVER_UUID ? { setting: "COOLIFY_TARGET_SERVER_UUID", status: "ok", detail: uuid }
         : { setting: "COOLIFY_TARGET_SERVER_UUID", status: "invalid", detail: "differs from the owner-approved server" },

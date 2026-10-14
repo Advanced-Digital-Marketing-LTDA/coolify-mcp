@@ -29,7 +29,7 @@ Enter these in the host's secret manager as runtime environment variables (never
 | `COOLIFY_OWNER_SUBJECT` | From step 1. |
 | `COOLIFY_API_TOKEN` | A team-scoped Coolify API token with `read`, `deploy` and `write` only. Do not grant `read:sensitive` or `root`. |
 | `COOLIFY_ORIGIN`, `MCP_PUBLIC_ORIGIN`, `OIDC_ISSUER`, `OIDC_CLIENT_ID` | Non-secret values decided in step 1. |
-| `COOLIFY_TARGET_SERVER_NAME` | `AI Agents` |
+| `COOLIFY_TARGET_SERVER_NAME` | `AI Agents` (must match the approved server's name exactly) |
 | `COOLIFY_TARGET_SERVER_UUID` | `pcrionkfci16zmkssngc6vaa` (the approved server; the preflight rejects any other) |
 | `MCP_TRUSTED_PROXY_CIDRS` | The TLS ingress peer address as seen inside the container, at most 32 explicit IPs or CIDRs. See the Docker section of the README for how to find it; do not trust the whole bridge subnet. |
 
