@@ -65,7 +65,7 @@ describe("hosted OAuth bridge", () => {
     await expect(provider.verifyAccessToken("not-a-token")).rejects.toThrow("Invalid access token");
   });
 
-  it("rejects non-owner login, non-ChatGPT redirects, and mismatched resource/scope requests", async () => {
+  it("rejects non-owner login, unsupported redirects, and mismatched resource/scope requests", async () => {
     const provider = await HostedOAuthProvider.create({ issuer: "https://identity.example.test", clientId: "synthetic-client", clientSecret: "synthetic-secret", resourceUri: resource, ownerSubject: owner });
     await expect(provider.clientsStore.registerClient!({ ...registration, redirect_uris: [new URL("https://evil.example.test/callback")] } as never)).rejects.toThrow();
     await expect(provider.clientsStore.registerClient!({ ...registration, grant_types: ["authorization_code", "client_credentials"] } as never)).rejects.toThrow();
@@ -88,6 +88,30 @@ describe("hosted OAuth bridge", () => {
     expect(await provider.clientsStore.getClient(first.client_id.slice(0, -1) + "!")).toBeUndefined();
     await expect(provider.clientsStore.registerClient!({ ...registration, redirect_uris: [new URL("https://chatgpt.com:444/connector/oauth/x")] } as never)).rejects.toThrow();
     await expect(provider.clientsStore.registerClient!({ ...registration, redirect_uris: [new URL("https://user@chatgpt.com/connector/oauth/x")] } as never)).rejects.toThrow();
+  });
+
+  it("accepts the Claude hosted callback and refuses look-alikes and loopback redirects", async () => {
+    const provider = await HostedOAuthProvider.create({ issuer: "https://identity.example.test", clientId: "synthetic-client", clientSecret: "synthetic-secret", resourceUri: resource, ownerSubject: owner });
+    const claudeCallback = "https://claude.ai/api/mcp/auth_callback";
+    const client = await provider.clientsStore.registerClient!({ ...registration, redirect_uris: [new URL(claudeCallback)] } as never);
+    expect(client).toMatchObject({ client_name: "Claude", redirect_uris: [claudeCallback], token_endpoint_auth_method: "none" });
+    expect(await provider.clientsStore.getClient(client.client_id)).toMatchObject({ client_name: "Claude" });
+    expect(await provider.clientsStore.getClient((await provider.clientsStore.registerClient!(registration as never)).client_id)).toMatchObject({ client_name: "ChatGPT" });
+    const redirects: string[] = [];
+    await provider.authorize(client, { codeChallenge: "claude-pkce-challenge", redirectUri: claudeCallback, resource: new URL(resource), scopes: ["mcp"], state: "claude-state" }, { redirect: (...args: unknown[]) => { redirects.push(String(args.at(-1))); } } as never);
+    const returned = new URL(await provider.completeLogin(new URL(`/oauth/callback?code=synthetic&state=${oidcFake.authorizationParams!.state}`, "https://mcp.example.test")));
+    expect(returned.origin + returned.pathname).toBe(claudeCallback);
+    const tokens = await provider.exchangeAuthorizationCode(client, returned.searchParams.get("code")!, undefined, claudeCallback, new URL(resource));
+    expect(await provider.verifyAccessToken(tokens.access_token)).toMatchObject({ clientId: client.client_id, extra: { ownerSubject: owner } });
+    for (const uri of [
+      "http://localhost:3118/callback", "http://127.0.0.1/callback", "http://claude.ai/api/mcp/auth_callback",
+      "https://claude.ai/api/mcp/auth_callback/x", "https://claude.ai/api/mcp/auth_callback?x=1", "https://claude.ai/api/mcp/auth_callback#x",
+      "https://user@claude.ai/api/mcp/auth_callback", "https://claude.ai:444/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback",
+      "https://evil.claude.ai/api/mcp/auth_callback", "https://chatgpt.com/api/mcp/auth_callback", "https://claude.ai/connector/oauth/x",
+    ]) {
+      await expect(provider.clientsStore.registerClient!({ ...registration, redirect_uris: [new URL(uri)] } as never), uri).rejects.toThrow("ChatGPT or Claude");
+    }
+    await expect(provider.clientsStore.registerClient!({ ...registration, redirect_uris: [new URL(claudeCallback), new URL(callback)] } as never)).rejects.toThrow();
   });
 
   it("expires registered clients and refresh grants without extending their validity on reads", async () => {

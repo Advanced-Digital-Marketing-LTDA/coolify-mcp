@@ -108,7 +108,7 @@ export async function httpFixture() {
   }
   const request = (path: string, init?: RequestInit) => fetch(new URL(path, publicOrigin), init);
   async function register(callbackId = "fixture-callback") {
-    const response = await request("/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ redirect_uris: [`https://chatgpt.com/connector/oauth/${callbackId}`], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }) });
+    const response = await request("/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ redirect_uris: [callbackId.startsWith("https://") ? callbackId : `https://chatgpt.com/connector/oauth/${callbackId}`], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }) });
     return { response, client: await response.json() as { client_id: string; redirect_uris: string[] } };
   }
   async function authorize(client: { client_id: string; redirect_uris: string[] }) {
@@ -124,7 +124,7 @@ export async function httpFixture() {
     const response = await fetch(callback, { redirect: "manual" });
     if (response.status !== 302) throw new Error(`OIDC callback failed: ${response.status}`);
     const redirect = new URL(response.headers.get("location")!);
-    if (redirect.searchParams.get("state") !== "fixture-chatgpt-state") throw new Error("ChatGPT state was not preserved");
+    if (redirect.searchParams.get("state") !== "fixture-chatgpt-state") throw new Error("Client state was not preserved");
     return { code: redirect.searchParams.get("code")!, callback };
   }
   async function login(callbackId = "fixture-callback") {

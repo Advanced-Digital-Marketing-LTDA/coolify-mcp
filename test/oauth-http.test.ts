@@ -21,6 +21,17 @@ describe("OAuth endpoints over real HTTP and a signed synthetic OIDC issuer", ()
     expect((await protectedRead("synthetic-idp-token")).status).toBe(401);
   });
 
+  it("completes the owner login for the Claude hosted callback and serves its token without an Origin header", async () => {
+    fixture = await httpFixture();
+    const { client, tokens } = await fixture.login("https://claude.ai/api/mcp/auth_callback");
+    expect(client).toMatchObject({ client_name: "Claude", redirect_uris: ["https://claude.ai/api/mcp/auth_callback"] });
+    const initialize = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "claude-fixture", version: "1" } } });
+    const response = await fixture.request("/mcp", { method: "POST", headers: { Authorization: `Bearer ${tokens.access_token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: initialize });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("mcp-session-id")).toBeTruthy();
+    expect((await fixture.register("http://localhost:3118/callback")).response.status).toBe(400);
+  });
+
   it("enforces S256 verifier and client, redirect, resource, and one-time code bindings at /token", async () => {
     fixture = await httpFixture();
     const { client } = await fixture.register("pkce-client"), { client: other } = await fixture.register("other-client");

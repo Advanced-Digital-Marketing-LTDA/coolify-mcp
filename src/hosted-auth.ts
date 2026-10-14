@@ -45,10 +45,10 @@ export class HostedOAuthProvider implements OAuthServerProvider {
         const responseTypes = metadata.response_types ?? ["code"];
         const scopes = metadata.scope?.split(/\s+/).filter(Boolean) ?? ["mcp"];
         if (metadata.token_endpoint_auth_method !== "none" ||
-          !Array.isArray(metadata.redirect_uris) || metadata.redirect_uris.length !== 1 || !metadata.redirect_uris.every(isChatGptCallback) ||
+          !Array.isArray(metadata.redirect_uris) || metadata.redirect_uris.length !== 1 || !metadata.redirect_uris.every((uri) => connectorName(uri)) ||
           !grants.includes("authorization_code") || grants.some((grant) => grant !== "authorization_code" && grant !== "refresh_token") ||
           responseTypes.length !== 1 || responseTypes[0] !== "code" || scopes.length !== 1 || scopes[0] !== "mcp") {
-          throw new InvalidClientMetadataError("Only the supported ChatGPT OAuth client registration is accepted");
+          throw new InvalidClientMetadataError("Only the supported ChatGPT or Claude OAuth client registration is accepted");
         }
         const payload = Buffer.from(JSON.stringify({ redirect: String(metadata.redirect_uris[0]), issuedAt: Math.floor(Date.now() / 1000) })).toString("base64url");
         const id = `${payload}.${this.clientMac(payload).toString("base64url")}`;
@@ -68,8 +68,9 @@ export class HostedOAuthProvider implements OAuthServerProvider {
     try {
       const data = JSON.parse(Buffer.from(payload, "base64url").toString()) as { redirect: unknown; issuedAt: unknown };
       const now = Date.now() / 1000;
-      if (!isChatGptCallback(data.redirect) || typeof data.issuedAt !== "number" || !Number.isSafeInteger(data.issuedAt) || data.issuedAt > now || now - data.issuedAt >= 30 * 86_400) return undefined;
-      return { client_id: id, client_id_issued_at: data.issuedAt, redirect_uris: [String(data.redirect)], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], client_name: "ChatGPT", scope: "mcp" } as OAuthClientInformationFull;
+      const name = connectorName(data.redirect);
+      if (!name || typeof data.issuedAt !== "number" || !Number.isSafeInteger(data.issuedAt) || data.issuedAt > now || now - data.issuedAt >= 30 * 86_400) return undefined;
+      return { client_id: id, client_id_issued_at: data.issuedAt, redirect_uris: [String(data.redirect)], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], client_name: name, scope: "mcp" } as OAuthClientInformationFull;
     } catch { return undefined; }
   }
 
@@ -175,9 +176,16 @@ export class HostedOAuthProvider implements OAuthServerProvider {
   }
 }
 
-function isChatGptCallback(value: unknown): value is URL {
+// Hosted connectors use fixed HTTPS callbacks: ChatGPT's per-connector path and
+// the single URI Claude's hosted apps register. Loopback callbacks are refused.
+const CLAUDE_CALLBACK = "https://claude.ai/api/mcp/auth_callback";
+
+function connectorName(value: unknown): "ChatGPT" | "Claude" | undefined {
   try {
     const url = value instanceof URL ? value : new URL(String(value));
-    return url.origin === "https://chatgpt.com" && !url.username && !url.password && /^\/connector\/oauth\/[A-Za-z0-9_-]{1,128}$/.test(url.pathname) && !url.search && !url.hash;
-  } catch { return false; }
+    if (url.username || url.password || url.search || url.hash) return undefined;
+    if (url.origin === "https://chatgpt.com" && /^\/connector\/oauth\/[A-Za-z0-9_-]{1,128}$/.test(url.pathname)) return "ChatGPT";
+    if (url.href === CLAUDE_CALLBACK) return "Claude";
+    return undefined;
+  } catch { return undefined; }
 }
