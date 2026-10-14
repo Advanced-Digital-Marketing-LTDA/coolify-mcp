@@ -12,25 +12,31 @@ export type PreflightReport = Readonly<{ ready: boolean; checks: readonly Check[
 
 // RFC 2606/6761 names cannot be the final public or Coolify origin.
 const RESERVED_NAMES = ["invalid", "example", "test", "localhost", "local", "example.com", "example.net", "example.org"];
-// Loopback, unspecified and documentation-only (RFC 5737/3849) IP literals
-// are unreachable for remote clients.
+// IPv4 special-purpose ranges (RFC 6890). "any" ranges can never serve HTTPS
+// to anyone; "public" ranges may still be a valid internal Coolify origin but
+// never the public connector origin. IPv4-mapped IPv6 forms are blocked too.
+const IPV4_SPECIAL = [
+  ["0.0.0.0", 8, "any"], ["127.0.0.0", 8, "any"], ["224.0.0.0", 3, "any"],
+  ["192.0.2.0", 24, "any"], ["198.51.100.0", 24, "any"], ["203.0.113.0", 24, "any"],
+  ["10.0.0.0", 8, "public"], ["172.16.0.0", 12, "public"], ["192.168.0.0", 16, "public"],
+  ["169.254.0.0", 16, "public"], ["100.64.0.0", 10, "public"], ["192.0.0.0", 24, "public"], ["198.18.0.0", 15, "public"],
+] as const;
 const LOCAL_ADDRESSES = new BlockList();
-LOCAL_ADDRESSES.addSubnet("127.0.0.0", 8, "ipv4");
-LOCAL_ADDRESSES.addSubnet("0.0.0.0", 8, "ipv4");
+const PRIVATE_ADDRESSES = new BlockList();
+for (const [net, prefix, scope] of IPV4_SPECIAL) {
+  const list = scope === "any" ? LOCAL_ADDRESSES : PRIVATE_ADDRESSES;
+  list.addSubnet(net, prefix, "ipv4");
+  list.addSubnet(`::ffff:${net}`, 96 + prefix, "ipv6");
+}
 LOCAL_ADDRESSES.addAddress("::1", "ipv6");
 LOCAL_ADDRESSES.addAddress("::", "ipv6");
-LOCAL_ADDRESSES.addSubnet("::ffff:127.0.0.0", 104, "ipv6");
-for (const net of ["192.0.2.0", "198.51.100.0", "203.0.113.0"]) LOCAL_ADDRESSES.addSubnet(net, 24, "ipv4");
+LOCAL_ADDRESSES.addSubnet("ff00::", 8, "ipv6");
 LOCAL_ADDRESSES.addSubnet("2001:db8::", 32, "ipv6");
-// Private, shared (CGNAT), link-local and unique-local addresses can still be a
-// valid internal Coolify origin, but never the public connector origin.
-const PRIVATE_ADDRESSES = new BlockList();
-for (const [net, prefix] of [["10.0.0.0", 8], ["172.16.0.0", 12], ["192.168.0.0", 16], ["169.254.0.0", 16], ["100.64.0.0", 10]] as const) {
-  PRIVATE_ADDRESSES.addSubnet(net, prefix, "ipv4");
-  PRIVATE_ADDRESSES.addSubnet(`::ffff:${net}`, 96 + prefix, "ipv6");
-}
-PRIVATE_ADDRESSES.addSubnet("fc00::", 7, "ipv6");
-PRIVATE_ADDRESSES.addSubnet("fe80::", 10, "ipv6");
+// A public IPv6 origin must be global unicast (or an IPv4-mapped address,
+// judged by the IPv4 ranges above); this excludes unique-local and link-local.
+const PUBLIC_IPV6 = new BlockList();
+PUBLIC_IPV6.addSubnet("2000::", 3, "ipv6");
+PUBLIC_IPV6.addSubnet("::ffff:0:0", 96, "ipv6");
 
 function isReservedHost(origin: string, publicOnly = false): boolean {
   // A fully qualified name may end in a root dot; it names the same host.
@@ -39,7 +45,8 @@ function isReservedHost(origin: string, publicOnly = false): boolean {
   const version = isIP(address);
   if (version) {
     const family = version === 4 ? "ipv4" : "ipv6";
-    return LOCAL_ADDRESSES.check(address, family) || (publicOnly && PRIVATE_ADDRESSES.check(address, family));
+    if (LOCAL_ADDRESSES.check(address, family)) return true;
+    return publicOnly && (PRIVATE_ADDRESSES.check(address, family) || (family === "ipv6" && !PUBLIC_IPV6.check(address, family)));
   }
   return RESERVED_NAMES.some((name) => host === name || host.endsWith(`.${name}`));
 }

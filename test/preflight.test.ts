@@ -78,15 +78,18 @@ describe("activation preflight", () => {
     expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: "https://1.1.1.1" }, "MCP_PUBLIC_ORIGIN")).toBe("ok");
     expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: "https://[2606:4700:4700::1111]" }, "MCP_PUBLIC_ORIGIN")).toBe("ok");
     expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: "https://172.32.0.1" }, "MCP_PUBLIC_ORIGIN")).toBe("ok");
+    expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: "https://223.255.255.1" }, "MCP_PUBLIC_ORIGIN")).toBe("ok");
+    expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: "https://[::ffff:1.1.1.1]" }, "MCP_PUBLIC_ORIGIN")).toBe("ok");
   });
 
-  it.each(["https://10.0.0.1", "https://172.16.5.4", "https://192.168.1.10", "https://169.254.1.1", "https://100.64.0.1", "https://[fd00::1]", "https://[fe80::1]", "https://[::ffff:10.0.0.1]"])("rejects non-routable public origin %s", (value) => {
+  it.each(["https://10.0.0.1", "https://172.16.5.4", "https://192.168.1.10", "https://169.254.1.1", "https://100.64.0.1", "https://[fd00::1]", "https://[fe80::1]", "https://[::ffff:10.0.0.1]", "https://224.0.0.1", "https://255.255.255.255", "https://198.18.0.1", "https://[ff02::1]", "https://[::ffff:224.0.0.1]", "https://[100::1]"])("rejects non-routable public origin %s", (value) => {
     expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: value }, "MCP_PUBLIC_ORIGIN")).toBe("invalid");
   });
 
   it("allows a private Coolify origin reachable only from the host", () => {
     expect(statusOf({ ...complete, COOLIFY_ORIGIN: "https://10.0.0.5" }, "COOLIFY_ORIGIN")).toBe("ok");
     expect(statusOf({ ...complete, COOLIFY_ORIGIN: "https://[fd00::5]" }, "COOLIFY_ORIGIN")).toBe("ok");
+    expect(statusOf({ ...complete, COOLIFY_ORIGIN: "https://224.0.0.1" }, "COOLIFY_ORIGIN")).toBe("invalid");
   });
 
   it("does not derive a callback from an invalid public origin", () => {
