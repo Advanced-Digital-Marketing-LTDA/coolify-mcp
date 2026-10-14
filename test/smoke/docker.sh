@@ -13,7 +13,7 @@ container=$(docker run -d --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 128 --memory 512m --cpus 1 \
   --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   --mount "type=bind,src=$(pwd)/test/smoke,dst=/app/test/smoke,readonly" \
-  --health-interval 1s --health-start-period 1s --health-retries 3 \
+  --health-interval 1s --health-timeout 5s --health-start-period 1s --health-retries 3 \
   "$image" node --import ./test/smoke/fixture.mjs dist/src/host.js)
 attempt=0
 while [ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" != healthy ]; do

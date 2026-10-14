@@ -57,7 +57,7 @@ export async function check() {
   }
   assert.ok(ready, "Built host did not become ready");
   assert.deepEqual(await (await request("/healthz")).json(), { status: "ok" });
-  assert.equal(spawnSync(process.execPath, ["docker/healthcheck.mjs"]).status, 0);
+  assert.equal(spawnSync(process.execPath, ["docker/healthcheck.mjs"], { env: { PORT: "3000" } }).status, 0);
   assert.equal((await request("/healthz", { headers: { Host: "attacker.example.test", "X-Forwarded-Host": "mcp.example.test" } })).status, 403);
   assert.equal((await request("/healthz", { headers: { Host: "127.0.0.1:3000", Origin: origin } })).status, 403);
   assert.equal((await request("/mcp", { headers: { Host: "127.0.0.1:3000" } })).status, 403);
