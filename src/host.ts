@@ -1,5 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { basename } from "node:path";
+import { isIP } from "node:net";
+import type { Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
@@ -18,7 +20,15 @@ import { createCoolifyMcpServer } from "./server.js";
 export async function createHostedApp(env: NodeJS.ProcessEnv = process.env) {
   const config = readRuntimeConfig(env);
   if (!isHostedConfigured(config)) throw new Error("Hosted MCP is inactive: complete owner, final HTTPS origin, OIDC, Coolify target, and Coolify token setup");
+  // Only explicit ingress addresses may supply client IPs for OAuth quotas.
+  const trustedProxies = (env.MCP_TRUSTED_PROXY_CIDRS ?? "").split(",").map((value) => value.trim());
+  if (trustedProxies.length > 32 || trustedProxies.some((value) => {
+    const parts = value.split("/");
+    const version = isIP(parts[0] ?? "");
+    return !version || parts.length > 2 || (parts.length === 2 && (!/^[1-9][0-9]*$/.test(parts[1]!) || Number(parts[1]) > (version === 4 ? 32 : 128)));
+  })) throw new Error("Hosted MCP is inactive: configure explicit trusted ingress IP addresses or CIDRs");
   const resourceUri = new URL("/mcp", config.publicOrigin!).href;
+  const issuerUrl = new URL(config.publicOrigin!);
   const oauth = await HostedOAuthProvider.create({ issuer: config.oidcIssuer!, clientId: config.oidcClientId!, clientSecret: config.oidcClientSecret!, resourceUri, ownerSubject: config.ownerSubject! });
   const { provider, close } = await CoolifyMcpProvider.connect(config.apiToken, config.origin);
   const configWriter = new CoolifyApplicationConfigWriter(config.origin, config.apiToken);
@@ -31,6 +41,7 @@ export async function createHostedApp(env: NodeJS.ProcessEnv = process.env) {
 
   const app = express();
   app.disable("x-powered-by");
+  app.set("trust proxy", trustedProxies);
   // Validate the direct Host, never caller-supplied forwarding headers. The TLS
   // proxy must preserve the public Host. Browser requests use these fixed origins.
   const host = new URL(config.publicOrigin!).host;
@@ -43,7 +54,7 @@ export async function createHostedApp(env: NodeJS.ProcessEnv = process.env) {
   });
   app.use(express.json({ limit: "64kb", strict: true }));
   app.get("/.well-known/oauth-authorization-server", (_req, res) => res.set("Cache-Control", "no-store").json({
-    issuer: config.publicOrigin,
+    issuer: issuerUrl.href,
     authorization_endpoint: `${config.publicOrigin}/authorize`,
     token_endpoint: `${config.publicOrigin}/token`,
     registration_endpoint: `${config.publicOrigin}/register`,
@@ -57,7 +68,7 @@ export async function createHostedApp(env: NodeJS.ProcessEnv = process.env) {
   }));
   app.use(mcpAuthRouter({
     provider: oauth,
-    issuerUrl: new URL(config.publicOrigin!),
+    issuerUrl,
     baseUrl: new URL(config.publicOrigin!),
     resourceServerUrl: new URL(resourceUri),
     scopesSupported: ["mcp"],
@@ -151,11 +162,18 @@ export async function createHostedApp(env: NodeJS.ProcessEnv = process.env) {
   return { app, close: async () => { clearInterval(sweep); await Promise.all([...sessions].map(([id, row]) => closeSession(id, row))); await close(); } };
 }
 
+/** Close transports before waiting for long-lived HTTP streams to finish. */
+export async function closeHostedListener(listener: Server, close: () => Promise<void>): Promise<void> {
+  const stopped = new Promise<void>((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
+  try { await close(); }
+  finally { listener.closeAllConnections(); await stopped; }
+}
+
 if (basename(process.argv[1] ?? "") === "host.js" || basename(process.argv[1] ?? "") === "host.ts") {
   void createHostedApp().then(({ app, close }) => {
     const port = Number(process.env.PORT ?? "3000");
     const listener = app.listen(port, "0.0.0.0");
-    const shutdown = () => listener.close(() => { void close(); });
+    const shutdown = () => { void closeHostedListener(listener, close).catch(() => { process.exitCode = 1; }); };
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
   }).catch(() => {

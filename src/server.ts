@@ -48,6 +48,8 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     await requirePinnedServer(provider, config.targetServerUuid, config.targetServerName);
   };
 
+  const outcomes = new WeakMap<object, "ok" | "failed">();
+  const outcome = <T extends object>(result: T, status: "ok" | "failed"): T => { outcomes.set(result, status); return result; };
   const tool = (operation: Parameters<DiagnosticLog["record"]>[0], callback: (args: any, extra: any) => Promise<unknown>): any => async (...callArgs: any[]) => {
     const extra = callArgs.length === 1 ? callArgs[0] : callArgs[1];
     const args = callArgs.length === 1 ? {} : callArgs[0];
@@ -56,7 +58,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
       await owner(extra.authInfo);
       const result = await callback(args, extra);
       const deniedWrite = typeof result === "object" && result !== null && "accepted" in result && result.accepted === false;
-      diagnostics.record(operation, deniedWrite ? "denied" : "ok", Date.now() - started);
+      diagnostics.record(operation, (typeof result === "object" && result !== null ? outcomes.get(result) : undefined) ?? (deniedWrite ? "denied" : "ok"), Date.now() - started);
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result as Record<string, unknown> };
     } catch (error) {
       diagnostics.record(operation, error instanceof AccessDeniedError ? "denied" : "failed", Date.now() - started);
@@ -195,7 +197,7 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     extra.signal.throwIfAborted();
     const result = await provider.deploy(applicationUuid);
     if (result.ok !== true || result.application_uuid !== applicationUuid || typeof result.deployment_uuid !== "string" || !result.deployment_uuid) {
-      return { accepted: false, message: "Coolify did not queue the deployment request" };
+      return outcome({ accepted: false, message: "Coolify did not queue the deployment request" }, "failed");
     }
     return { accepted: true, message: "Deployment request accepted" };
   }));
@@ -225,12 +227,13 @@ export function createCoolifyMcpServer(dependencies: ServerDependencies): McpSer
     outputSchema: z.object({ accepted: z.boolean(), applicationUuid: z.string(), field: z.enum(APPLICATION_CONFIG_FIELDS), message: z.string() }),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, tool("config_update", async ({ applicationUuid, field, value }, extra) => {
-    if (!dependencies.configWriter || !validateApplicationConfig(field, value)) throw new NotConfiguredError("Application configuration updates are not configured");
+    if (!dependencies.configWriter) throw new NotConfiguredError("Application configuration updates are not configured");
+    if (!validateApplicationConfig(field, value)) throw new AccessDeniedError("Invalid application configuration field or value");
     const current = await requireResourceOnTarget(provider, "application", applicationUuid, config.targetServerUuid!);
     await requireSingleServerApplication(provider, applicationUuid, config.targetServerUuid!);
     const before = current[field];
     if (!validateApplicationConfig(field, before)) throw new AccessDeniedError("Current configuration field is unavailable for safe confirmation");
-    if (before === value) return { accepted: false, applicationUuid, field, message: "Requested value already matches the current configuration" };
+    if (before === value) return outcome({ accepted: false, applicationUuid, field, message: "Requested value already matches the current configuration" }, "ok");
     if (!(await requestConfigConfirmation(extra, label(current), applicationUuid, field, before, value))) return { accepted: false, applicationUuid, field, message: "Configuration update was not confirmed" };
     await owner(extra.authInfo);
     await recheckBeforeWrite(provider, config.targetServerUuid, config.targetServerName, "application", applicationUuid);

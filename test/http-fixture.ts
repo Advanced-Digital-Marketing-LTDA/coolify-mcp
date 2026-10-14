@@ -5,7 +5,7 @@ import { request as httpRequest } from "node:http";
 import { Readable } from "node:stream";
 import { vi } from "vitest";
 import { CoolifyMcpProvider } from "../src/coolify.js";
-import { createHostedApp } from "../src/host.js";
+import { closeHostedListener, createHostedApp } from "../src/host.js";
 import { FakeCoolify, appTarget } from "./fixtures.js";
 
 export const publicOrigin = "https://mcp.example.test";
@@ -14,6 +14,7 @@ export const issuer = "https://identity.example.test";
 export const owner = "owner-stable-subject";
 export const env = {
   COOLIFY_ORIGIN: "https://coolify.example.test", MCP_PUBLIC_ORIGIN: publicOrigin,
+  MCP_TRUSTED_PROXY_CIDRS: "127.0.0.1/32",
   COOLIFY_TARGET_SERVER_NAME: "Target Server", COOLIFY_TARGET_SERVER_UUID: "server-target",
   COOLIFY_OWNER_SUBJECT: owner, COOLIFY_API_TOKEN: "synthetic-team-token",
   OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "synthetic-oidc-client", OIDC_CLIENT_SECRET: "synthetic-oidc-secret",
@@ -27,7 +28,7 @@ async function listen(app: ReturnType<typeof express>) {
   if (!address || typeof address === "string") throw new Error("Missing loopback address");
   return { server, origin: `http://127.0.0.1:${address.port}` };
 }
-const closeServer = (server: Server) => new Promise<void>((resolve, reject) => { server.closeAllConnections(); server.close((error) => error ? reject(error) : resolve()); });
+const closeServer = (server: Server) => new Promise<void>((resolve, reject) => { if (!server.listening) { resolve(); return; } server.closeAllConnections(); server.close((error) => error ? reject(error) : resolve()); });
 
 /** Real HTTP endpoints and signed OIDC tokens; only network destinations are synthetic. */
 export async function httpFixture() {
@@ -41,6 +42,7 @@ export async function httpFixture() {
   const idpCodes = new Map<string, URLSearchParams>();
   const claimsOverride: Record<string, unknown> = {};
   const idpBehavior = { corruptSignature: false };
+  const clientSourceAddress = { value: "127.0.0.1" };
   idp.get("/.well-known/openid-configuration", (_req, res) => res.json({
     issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, jwks_uri: `${issuer}/jwks`,
     response_types_supported: ["code"], subject_types_supported: ["public"], id_token_signing_alg_values_supported: ["RS256"],
@@ -83,7 +85,7 @@ export async function httpFixture() {
     // Node's native fetch rewrites Host. Use real node:http sockets so the
     // fixture exercises the public Host preserved by a reverse proxy.
     return new Promise<Response>((resolve, reject) => {
-      const request = httpRequest(new URL(url.pathname + url.search, destination), { method: init?.method ?? "GET", headers: Object.fromEntries(headers), signal: init?.signal ?? undefined }, (response) => {
+      const request = httpRequest(new URL(url.pathname + url.search, destination), { method: init?.method ?? "GET", headers: Object.fromEntries(headers), signal: init?.signal ?? undefined, localAddress: url.origin === publicOrigin ? clientSourceAddress.value : "127.0.0.1" }, (response) => {
         const responseHeaders = new Headers();
         for (const [key, value] of Object.entries(response.headers)) if (value !== undefined) responseHeaders.set(key, Array.isArray(value) ? value.join(", ") : value);
         const status = response.statusCode!;
@@ -133,6 +135,7 @@ export async function httpFixture() {
     if (response.status !== 200) throw new Error(`Token exchange failed: ${response.status}`);
     return { client, tokens: await response.json() as { access_token: string; refresh_token: string; expires_in: number }, grant };
   }
-  return { provider, writes, request, register, authorize, code, login, tokenRequest, claimsOverride, idpBehavior, verifier,
+  return { provider, writes, request, register, authorize, code, login, tokenRequest, claimsOverride, idpBehavior, clientSourceAddress, verifier,
+    shutdown: () => closeHostedListener(host.server, hosted.close),
     close: async () => { await hosted.close(); await closeServer(host.server); await closeServer(identityHost.server); vi.restoreAllMocks(); } };
 }

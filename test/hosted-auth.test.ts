@@ -19,6 +19,7 @@ vi.mock("openid-client", () => ({
   },
 }));
 
+import { CoolifyMcpProvider } from "../src/coolify.js";
 import { HostedOAuthProvider } from "../src/hosted-auth.js";
 import { createHostedApp } from "../src/host.js";
 
@@ -35,6 +36,14 @@ describe("hosted OAuth bridge", () => {
 
   it("fails closed before network setup when owner activation settings are incomplete", async () => {
     await expect(createHostedApp({})).rejects.toThrow("Hosted MCP is inactive");
+  });
+
+  it.each([undefined, "", "true", "1", "loopback", "0.0.0.0/0", "::/0", "127.0.0.1/33", "::1/129", "127.0.0.1/", "127.0.0.1/32/1", Array(33).fill("127.0.0.1").join(",")])("rejects invalid trusted ingress settings before provider connectivity: %s", async (proxy) => {
+    const connect = vi.spyOn(CoolifyMcpProvider, "connect");
+    try {
+      await expect(createHostedApp({ COOLIFY_ORIGIN: "https://coolify.example.test", MCP_PUBLIC_ORIGIN: "https://mcp.example.test", OIDC_ISSUER: "https://identity.example.test", OIDC_CLIENT_ID: "synthetic-client", OIDC_CLIENT_SECRET: "synthetic-secret", COOLIFY_OWNER_SUBJECT: owner, COOLIFY_API_TOKEN: "synthetic-token", COOLIFY_TARGET_SERVER_UUID: "server-target", COOLIFY_TARGET_SERVER_NAME: "AI Agents", MCP_TRUSTED_PROXY_CIDRS: proxy })).rejects.toThrow("configure explicit trusted ingress");
+      expect(connect).not.toHaveBeenCalled();
+    } finally { connect.mockRestore(); }
   });
 
   it("binds ChatGPT DCR, OIDC login, code exchange, and access tokens to the pinned owner and MCP resource", async () => {

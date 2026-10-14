@@ -9,9 +9,10 @@ describe("OAuth endpoints over real HTTP and a signed synthetic OIDC issuer", ()
   it("publishes resource-bound discovery, requires bearer authentication, and omits upstream issuer from token responses", async () => {
     fixture = await httpFixture();
     const metadata = await (await fixture.request("/.well-known/oauth-authorization-server")).json();
-    expect(metadata).toMatchObject({ issuer: publicOrigin, code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"] });
+    expect(metadata).toMatchObject({ code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"] });
     const protectedResource = await (await fixture.request("/.well-known/oauth-protected-resource/mcp")).json();
     expect(protectedResource).toMatchObject({ resource, authorization_servers: [publicOrigin + "/"] });
+    expect(metadata.issuer).toBe(protectedResource.authorization_servers[0]);
     const response = await fixture.request("/mcp", { headers: { "X-Sites-Owner": "owner-stable-subject" } });
     expect(response.status).toBe(401);
     expect(response.headers.get("www-authenticate")).toContain("resource_metadata=");
@@ -109,5 +110,24 @@ describe("OAuth endpoints over real HTTP and a signed synthetic OIDC issuer", ()
     expect(rejected.status).toBe(400);
     expect(await rejected.json()).toMatchObject({ error: "invalid_client" });
     expect((await protectedRead(active.tokens.access_token)).status).toBe(400);
+  });
+
+  it("isolates anonymous quotas by the actual client address forwarded by a trusted proxy", async () => {
+    fixture = await httpFixture();
+    const denied = { method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": "198.51.100.10" }, body: "{}" };
+    for (let index = 0; index < 20; index++) expect((await fixture.request("/register", denied)).status).toBe(400);
+    expect((await fixture.request("/register", denied)).status).toBe(429);
+    expect((await fixture.request("/register", { ...denied, headers: { ...denied.headers, "X-Forwarded-For": "198.51.100.11" } })).status).toBe(400);
+    expect((await fixture.request("/.well-known/oauth-authorization-server", { headers: { Host: "evil.example.test", "X-Forwarded-Host": "mcp.example.test" } })).status).toBe(403);
+  });
+
+  it("ignores spoofed forwarded addresses from a socket outside the trusted proxy list", async () => {
+    fixture = await httpFixture();
+    fixture.clientSourceAddress.value = "127.0.0.2";
+    for (let index = 0; index < 20; index++) {
+      const response = await fixture.request("/register", { method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": `198.51.100.${index + 1}` }, body: "{}" });
+      expect(response.status).toBe(400);
+    }
+    expect((await fixture.request("/register", { method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": "198.51.100.200" }, body: "{}" })).status).toBe(429);
   });
 });

@@ -34,6 +34,15 @@ describe("application configuration writes", () => {
     await expect(writer.update("app-one", "name", "safe")).rejects.toThrow(/did not match/);
   });
 
+  it("cancels an upstream error body without reading sensitive content", async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream({ cancel });
+    const request = vi.fn(async () => new Response(body, { status: 500 }));
+    const writer = new CoolifyApplicationConfigWriter("https://coolify.example.test", "synthetic-token", request as typeof fetch);
+    await expect(writer.update("app-one", "name", "safe")).rejects.toThrow("Coolify application configuration update failed");
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("bounds the upstream configuration response body", async () => {
     const request = vi.fn(async () => new Response("x".repeat(5_000), { status: 200 }));
     const writer = new CoolifyApplicationConfigWriter("https://coolify.example.test", "synthetic-token", request as typeof fetch);
@@ -50,6 +59,8 @@ describe("application configuration writes", () => {
     expect(validateApplicationConfig("description", "x".repeat(2_000))).toBe(true);
     expect(validateApplicationConfig("description", "x".repeat(2_001))).toBe(false);
     expect(validateApplicationConfig("description", "bidi\u202eattack")).toBe(false);
+    expect(validateApplicationConfig("description", "line\u2028separator")).toBe(false);
+    expect(validateApplicationConfig("description", "paragraph\u2029separator")).toBe(false);
     expect(validateApplicationConfig("ports_exposes", "80,3000")).toBe(true);
     expect(validateApplicationConfig("ports_exposes", "1")).toBe(true);
     expect(validateApplicationConfig("ports_exposes", "65535")).toBe(true);

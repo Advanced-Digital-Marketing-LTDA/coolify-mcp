@@ -16,7 +16,10 @@ export class CoolifyApplicationConfigWriter {
       headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ [field]: value }),
     });
-    if (!response.ok) throw new Error("Coolify application configuration update failed");
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error("Coolify application configuration update failed");
+    }
     let responseUuid: unknown;
     try {
       const reader = response.body?.getReader();

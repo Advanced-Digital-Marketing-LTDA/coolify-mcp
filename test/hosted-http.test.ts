@@ -131,6 +131,19 @@ describe("hosted MCP over real HTTP", () => {
     expect(field.enum).not.toContain("is_force_https_enabled");
   });
 
+  it("shuts down an active HTTP event stream without waiting for the client to disconnect", async () => {
+    fixture = await httpFixture();
+    const { tokens } = await fixture.login();
+    const { transport } = await connect(tokens.access_token);
+    const response = await fixture.request("/mcp", { headers: { Authorization: `Bearer ${tokens.access_token}`, Accept: "text/event-stream", "Mcp-Protocol-Version": "2025-11-25", "Mcp-Session-Id": transport.sessionId! } });
+    // The SDK client already holds the one permitted event stream.
+    expect(response.status).toBe(409);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([fixture.shutdown(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Shutdown did not close active stream")), 1_000); })]);
+    } finally { clearTimeout(timer); await response.body?.cancel(); }
+  });
+
   it("expires idle sessions while their access token is still valid", async () => {
     fixture = await httpFixture();
     const { tokens } = await fixture.login();
@@ -267,5 +280,49 @@ describe("hosted MCP over real HTTP", () => {
     const tokens = await refreshed.json();
     clock.mockReturnValue(now + 60 * 60_000);
     expect((await fixture.request("/mcp", { headers: { Authorization: `Bearer ${tokens.access_token}`, Accept: "text/event-stream", "Mcp-Protocol-Version": "2025-11-25", "Mcp-Session-Id": connection.transport.sessionId! } })).status).toBe(404);
+  });
+
+  it.each(writeCases)("denies $tool after a declined elicitation even when content repeats the exact phrase", async ({ tool, args }) => {
+    fixture = await httpFixture();
+    const active = await fixture.login();
+    const { client } = await connect(active.tokens.access_token, async (message) => ({ action: "decline", content: { confirmation: message.split("Type exactly: ")[1]! } }));
+    expect((await client.callTool({ name: tool, arguments: args })).structuredContent).toMatchObject({ accepted: false });
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.provider.writes).toEqual([]);
+  });
+
+  it.each(["stored\u2028value", "stored\u2029value"])("denies unsafe stored configuration before showing confirmation: %s", async (stored) => {
+    fixture = await httpFixture();
+    fixture.provider.collections.application = fixture.provider.collections.application.map((row) => ({ ...row, description: stored }));
+    const answer = vi.fn(async () => ({ action: "decline" as const }));
+    const { tokens } = await fixture.login();
+    const { client } = await connect(tokens.access_token, answer);
+    const result = await client.callTool({ name: "coolify_update_application_configuration", arguments: { applicationUuid: "app-alpha", field: "description", value: "safe" } });
+    expect(result.isError).toBe(true);
+    expect(answer).not.toHaveBeenCalled();
+    expect(fixture.writes).toHaveLength(0);
+  });
+
+  it("returns a fixed invalid-value error instead of claiming the configuration writer is unavailable", async () => {
+    fixture = await httpFixture();
+    const active = await fixture.login();
+    const { client } = await connect(active.tokens.access_token);
+    const result = await client.callTool({ name: "coolify_update_application_configuration", arguments: { applicationUuid: "app-alpha", field: "health_check_enabled", value: "fixture-secret-value" } });
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([{ type: "text", text: "Invalid application configuration field or value" }]);
+    expect(fixture.writes).toEqual([]);
+  });
+
+  it("records upstream queue failures as failed and unchanged configuration as a successful no-op", async () => {
+    fixture = await httpFixture();
+    fixture.provider.deployResult = { ok: false };
+    const active = await fixture.login();
+    const { client } = await connect(active.tokens.access_token);
+    await client.callTool({ name: "coolify_deploy_application", arguments: { applicationUuid: "app-alpha" } });
+    await client.callTool({ name: "coolify_update_application_configuration", arguments: { applicationUuid: "app-alpha", field: "description", value: "Synthetic app" } });
+    const result = await client.callTool({ name: "coolify_diagnostic_logs", arguments: {} });
+    const events = (result.structuredContent as { events: Array<{ operation: string; outcome: string }> }).events;
+    expect(events.find((event) => event.operation === "deploy")?.outcome).toBe("failed");
+    expect(events.find((event) => event.operation === "config_update")?.outcome).toBe("ok");
   });
 });
