@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 export const MAX_PAGES = 1_000;
 export const PAGE_SIZE = 100;
 
@@ -60,4 +62,15 @@ export function isSafeCoolifyOrigin(value: string | undefined): value is string 
 
 export function isStableOwnerSubject(subject: string | undefined): subject is string {
   return Boolean(subject?.trim() && !subject.includes("@"));
+}
+
+/** Explicit ingress IPs/CIDRs (at most 32); wildcard ranges and hop counts are rejected. */
+export function parseTrustedProxies(value: string | undefined): string[] | undefined {
+  const proxies = (value ?? "").split(",").map((entry) => entry.trim());
+  if (proxies.length > 32 || proxies.some((entry) => {
+    const parts = entry.split("/");
+    const version = isIP(parts[0] ?? "");
+    return !version || parts.length > 2 || (parts.length === 2 && (!/^[1-9][0-9]*$/.test(parts[1]!) || Number(parts[1]) > (version === 4 ? 32 : 128)));
+  })) return undefined;
+  return proxies;
 }

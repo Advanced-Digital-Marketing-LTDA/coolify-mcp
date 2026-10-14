@@ -63,6 +63,8 @@ Keep exactly **one replica**; do not scale this Compose service or use overlappi
 
 ## Activation gates
 
+The step-by-step owner runbook, including the `npm run preflight` check that validates these settings without printing secrets, is in [docs/owner-setup.md](docs/owner-setup.md).
+
 1. Choose an OIDC provider and register its confidential client with callback `https://<final-mcp-origin>/oauth/callback`. Set `OIDC_ISSUER`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET` in trusted deployment settings. The issuer must advertise PKCE S256. Store the client secret only in the host's secret manager.
 2. Set `MCP_PUBLIC_ORIGIN` to the final trusted HTTPS origin, without path, query, fragment, credentials, or nonstandard port. This value must match the origin ChatGPT connects to. The previous HTTP dashboard address is not accepted for token-bearing traffic.
 3. Pin the owner's stable non-email subject in `COOLIFY_OWNER_SUBJECT`. First-login enrollment is not supported.
