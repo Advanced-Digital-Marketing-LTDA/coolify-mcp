@@ -14,7 +14,7 @@ export type PreflightReport = Readonly<{ ready: boolean; checks: readonly Check[
 const RESERVED_NAMES = ["invalid", "example", "test", "localhost", "local", "example.com", "example.net", "example.org"];
 // Private-use namespaces (ICANN .internal, RFC 8375, RFC 9476) never resolve in
 // global DNS, so they can only be an internal Coolify origin.
-const PRIVATE_NAMES = ["internal", "home.arpa", "alt"];
+const PRIVATE_NAMES = ["internal", "home.arpa", "alt", "onion"];
 // IPv4 special-purpose ranges (RFC 6890). "any" ranges can never serve HTTPS
 // to anyone; "public" ranges may still be a valid internal Coolify origin but
 // never the public connector origin. IPv4-mapped IPv6 forms are blocked too.
@@ -41,6 +41,9 @@ LOCAL_ADDRESSES.addSubnet("2001:db8::", 32, "ipv6");
 const PUBLIC_IPV6 = new BlockList();
 PUBLIC_IPV6.addSubnet("2000::", 3, "ipv6");
 PUBLIC_IPV6.addSubnet("::ffff:0:0", 96, "ipv6");
+// Non-global special-purpose blocks inside 2000::/3 (IANA IPv6 registry):
+// IETF protocol assignments, documentation and SRv6 SIDs.
+for (const [net, prefix] of [["2001::", 23], ["3fff::", 20], ["5f00::", 16]] as const) PRIVATE_ADDRESSES.addSubnet(net, prefix, "ipv6");
 
 function isReservedHost(origin: string, publicOnly = false): boolean {
   // A fully qualified name may end in a root dot; it names the same host.

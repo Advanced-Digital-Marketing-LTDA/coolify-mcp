@@ -82,7 +82,7 @@ describe("activation preflight", () => {
     expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: "https://[::ffff:1.1.1.1]" }, "MCP_PUBLIC_ORIGIN")).toBe("ok");
   });
 
-  it.each(["https://10.0.0.1", "https://172.16.5.4", "https://192.168.1.10", "https://169.254.1.1", "https://100.64.0.1", "https://[fd00::1]", "https://[fe80::1]", "https://[::ffff:10.0.0.1]", "https://224.0.0.1", "https://255.255.255.255", "https://198.18.0.1", "https://[ff02::1]", "https://[::ffff:224.0.0.1]", "https://[100::1]", "https://192.88.99.2", "https://mcp.internal", "https://bridge.home.arpa", "https://mcp.alt"])("rejects non-routable public origin %s", (value) => {
+  it.each(["https://10.0.0.1", "https://172.16.5.4", "https://192.168.1.10", "https://169.254.1.1", "https://100.64.0.1", "https://[fd00::1]", "https://[fe80::1]", "https://[::ffff:10.0.0.1]", "https://224.0.0.1", "https://255.255.255.255", "https://198.18.0.1", "https://[ff02::1]", "https://[::ffff:224.0.0.1]", "https://[100::1]", "https://192.88.99.2", "https://mcp.internal", "https://bridge.home.arpa", "https://mcp.alt", "https://connector.onion", "https://[3fff::1]", "https://[2001:2::1]", "https://[5f00::1]"])("rejects non-routable public origin %s", (value) => {
     expect(statusOf({ ...complete, MCP_PUBLIC_ORIGIN: value }, "MCP_PUBLIC_ORIGIN")).toBe("invalid");
   });
 
