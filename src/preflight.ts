@@ -12,13 +12,16 @@ export type PreflightReport = Readonly<{ ready: boolean; checks: readonly Check[
 
 // RFC 2606/6761 names cannot be the final public or Coolify origin.
 const RESERVED_NAMES = ["invalid", "example", "test", "localhost", "local", "example.com", "example.net", "example.org"];
-// Loopback and unspecified IP literals are unreachable for remote clients.
+// Loopback, unspecified and documentation-only (RFC 5737/3849) IP literals
+// are unreachable for remote clients.
 const LOCAL_ADDRESSES = new BlockList();
 LOCAL_ADDRESSES.addSubnet("127.0.0.0", 8, "ipv4");
 LOCAL_ADDRESSES.addSubnet("0.0.0.0", 8, "ipv4");
 LOCAL_ADDRESSES.addAddress("::1", "ipv6");
 LOCAL_ADDRESSES.addAddress("::", "ipv6");
 LOCAL_ADDRESSES.addSubnet("::ffff:127.0.0.0", 104, "ipv6");
+for (const net of ["192.0.2.0", "198.51.100.0", "203.0.113.0"]) LOCAL_ADDRESSES.addSubnet(net, 24, "ipv4");
+LOCAL_ADDRESSES.addSubnet("2001:db8::", 32, "ipv6");
 
 function isReservedHost(origin: string): boolean {
   // A fully qualified name may end in a root dot; it names the same host.
