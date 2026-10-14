@@ -167,6 +167,8 @@ export async function checkDiscovery(issuer: string, request: typeof fetch = fet
     // Match openid-client's startup check exactly: URL-normalized, otherwise byte-equal.
     if (normalizedIssuer(metadata.issuer) !== new URL(issuer).href) return { ok: false, detail: "discovery issuer does not match OIDC_ISSUER" };
     if (!isHttpsUrl(metadata.authorization_endpoint) || !isHttpsUrl(metadata.token_endpoint)) return { ok: false, detail: "provider does not advertise HTTPS authorization and token endpoints" };
+    // The host builds plain authorization URLs, not pushed authorization requests.
+    if (metadata.require_pushed_authorization_requests === true) return { ok: false, detail: "provider requires pushed authorization requests, which the bridge does not send" };
     if (!Array.isArray(metadata.code_challenge_methods_supported) || !metadata.code_challenge_methods_supported.includes("S256")) return { ok: false, detail: "provider does not advertise PKCE S256" };
     const responseTypes = metadata.response_types_supported;
     if (!Array.isArray(responseTypes) || !responseTypes.includes("code")) return { ok: false, detail: "provider does not support the authorization code flow" };

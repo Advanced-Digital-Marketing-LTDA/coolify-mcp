@@ -139,6 +139,7 @@ describe("issuer discovery check", () => {
     [{ ...good, response_types_supported: ["id_token"] }, /authorization code/],
     [{ ...good, token_endpoint_auth_methods_supported: ["client_secret_basic"] }, /client_secret_post/],
     [noAuthMethods, /client_secret_post/],
+    [{ ...good, require_pushed_authorization_requests: true }, /pushed authorization/],
     [{ ...good, token_endpoint: "" }, /authorization and token endpoints/],
     [{ ...good, authorization_endpoint: "http://login.bridge-owner.dev/authorize" }, /authorization and token endpoints/],
   ])("rejects unsuitable providers", async (body, message) => {
