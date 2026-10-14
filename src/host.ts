@@ -1,6 +1,5 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { basename } from "node:path";
-import { isIP } from "node:net";
 import type { Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
@@ -9,7 +8,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { isHostedConfigured, readRuntimeConfig } from "./config.js";
+import { isHostedConfigured, parseTrustedProxies, readRuntimeConfig } from "./config.js";
 import { CoolifyMcpProvider } from "./coolify.js";
 import { CoolifyApplicationConfigWriter } from "./coolify-rest.js";
 import { DiagnosticLog } from "./diagnostics.js";
@@ -21,12 +20,8 @@ export async function createHostedApp(env: NodeJS.ProcessEnv = process.env) {
   const config = readRuntimeConfig(env);
   if (!isHostedConfigured(config)) throw new Error("Hosted MCP is inactive: complete owner, final HTTPS origin, OIDC, Coolify target, and Coolify token setup");
   // Only explicit ingress addresses may supply client IPs for OAuth quotas.
-  const trustedProxies = (env.MCP_TRUSTED_PROXY_CIDRS ?? "").split(",").map((value) => value.trim());
-  if (trustedProxies.length > 32 || trustedProxies.some((value) => {
-    const parts = value.split("/");
-    const version = isIP(parts[0] ?? "");
-    return !version || parts.length > 2 || (parts.length === 2 && (!/^[1-9][0-9]*$/.test(parts[1]!) || Number(parts[1]) > (version === 4 ? 32 : 128)));
-  })) throw new Error("Hosted MCP is inactive: configure explicit trusted ingress IP addresses or CIDRs");
+  const trustedProxies = parseTrustedProxies(env.MCP_TRUSTED_PROXY_CIDRS);
+  if (!trustedProxies) throw new Error("Hosted MCP is inactive: configure explicit trusted ingress IP addresses or CIDRs");
   const resourceUri = new URL("/mcp", config.publicOrigin!).href;
   const issuerUrl = new URL(config.publicOrigin!);
   const oauth = await HostedOAuthProvider.create({ issuer: config.oidcIssuer!, clientId: config.oidcClientId!, clientSecret: config.oidcClientSecret!, resourceUri, ownerSubject: config.ownerSubject! });

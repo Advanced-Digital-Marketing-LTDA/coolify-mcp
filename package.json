@@ -14,7 +14,8 @@
     "smoke": "npm run build && node test/smoke/run.mjs",
     "smoke:docker": "sh test/smoke/docker.sh",
     "mutation": "stryker run",
-    "ci": "npm run build && npm test && npm run mutation"
+    "ci": "npm run build && npm test && npm run mutation",
+    "preflight": "node dist/src/preflight.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

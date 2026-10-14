@@ -1,0 +1,111 @@
+import { basename } from "node:path";
+import { isHostedConfigured, isSafeCoolifyOrigin, isStableOwnerSubject, parseTrustedProxies, readRuntimeConfig } from "./config.js";
+
+/** The owner-approved AI Agents server; the bridge must stay pinned to it. */
+export const APPROVED_SERVER_UUID = "pcrionkfci16zmkssngc6vaa";
+
+export type CheckStatus = "ok" | "missing" | "invalid";
+export type Check = Readonly<{ setting: string; status: CheckStatus; detail: string }>;
+export type PreflightReport = Readonly<{ ready: boolean; checks: readonly Check[]; mcpUrl?: string; oidcCallbackUri?: string }>;
+
+// RFC 2606/6761 names cannot be the final public or Coolify origin.
+const RESERVED_NAMES = ["invalid", "example", "test", "localhost", "local", "example.com", "example.net", "example.org"];
+
+function isReservedHost(origin: string): boolean {
+  const host = new URL(origin).hostname.toLowerCase();
+  return RESERVED_NAMES.some((name) => host === name || host.endsWith(`.${name}`));
+}
+
+function originCheck(setting: string, value: string | undefined): Check {
+  if (!value?.trim()) return { setting, status: "missing", detail: "set an HTTPS origin" };
+  if (!isSafeCoolifyOrigin(value)) return { setting, status: "invalid", detail: "must be https://host with no path, query, credentials or port" };
+  const origin = new URL(value).origin;
+  if (isReservedHost(origin)) return { setting, status: "invalid", detail: "reserved example or local hostname" };
+  return { setting, status: "ok", detail: origin };
+}
+
+// Secrets and the owner subject are only ever reported as present or absent.
+function hiddenCheck(setting: string, value: string | undefined, valid = (_v: string) => true, rule = ""): Check {
+  if (!value?.trim()) return { setting, status: "missing", detail: "inject through the host secret manager" };
+  if (!valid(value.trim())) return { setting, status: "invalid", detail: `${rule} (value hidden)` };
+  return { setting, status: "ok", detail: "set (value hidden)" };
+}
+
+/**
+ * Validates activation settings offline. Output contains only non-secret
+ * settings and derived public URLs; secret values are never echoed.
+ */
+export function runPreflight(env: NodeJS.ProcessEnv = process.env): PreflightReport {
+  const publicOrigin = originCheck("MCP_PUBLIC_ORIGIN", env.MCP_PUBLIC_ORIGIN);
+  const issuer = env.OIDC_ISSUER?.trim();
+  const config = readRuntimeConfig(env);
+  const uuid = env.COOLIFY_TARGET_SERVER_UUID?.trim();
+  const checks: Check[] = [
+    publicOrigin,
+    originCheck("COOLIFY_ORIGIN", env.COOLIFY_ORIGIN),
+    !issuer ? { setting: "OIDC_ISSUER", status: "missing", detail: "set the provider's HTTPS issuer URL" }
+      : config.oidcIssuer ? { setting: "OIDC_ISSUER", status: "ok", detail: config.oidcIssuer }
+        : { setting: "OIDC_ISSUER", status: "invalid", detail: "must be an HTTPS URL without credentials, query or fragment" },
+    env.OIDC_CLIENT_ID?.trim() ? { setting: "OIDC_CLIENT_ID", status: "ok", detail: env.OIDC_CLIENT_ID.trim() }
+      : { setting: "OIDC_CLIENT_ID", status: "missing", detail: "set the confidential client ID" },
+    hiddenCheck("OIDC_CLIENT_SECRET", env.OIDC_CLIENT_SECRET),
+    hiddenCheck("COOLIFY_OWNER_SUBJECT", env.COOLIFY_OWNER_SUBJECT, isStableOwnerSubject, "must be the stable OIDC sub claim, not an email"),
+    hiddenCheck("COOLIFY_API_TOKEN", env.COOLIFY_API_TOKEN),
+    env.COOLIFY_TARGET_SERVER_NAME?.trim() ? { setting: "COOLIFY_TARGET_SERVER_NAME", status: "ok", detail: env.COOLIFY_TARGET_SERVER_NAME.trim() }
+      : { setting: "COOLIFY_TARGET_SERVER_NAME", status: "missing", detail: "set the approved server name" },
+    !uuid ? { setting: "COOLIFY_TARGET_SERVER_UUID", status: "missing", detail: `set ${APPROVED_SERVER_UUID}` }
+      : uuid === APPROVED_SERVER_UUID ? { setting: "COOLIFY_TARGET_SERVER_UUID", status: "ok", detail: uuid }
+        : { setting: "COOLIFY_TARGET_SERVER_UUID", status: "invalid", detail: "differs from the owner-approved server" },
+    !env.MCP_TRUSTED_PROXY_CIDRS?.trim() ? { setting: "MCP_TRUSTED_PROXY_CIDRS", status: "missing", detail: "set the ingress peer IPs/CIDRs" }
+      : parseTrustedProxies(env.MCP_TRUSTED_PROXY_CIDRS) ? { setting: "MCP_TRUSTED_PROXY_CIDRS", status: "ok", detail: parseTrustedProxies(env.MCP_TRUSTED_PROXY_CIDRS)!.join(",") }
+        : { setting: "MCP_TRUSTED_PROXY_CIDRS", status: "invalid", detail: "use at most 32 explicit IPs/CIDRs; no wildcards or hop counts" },
+  ];
+  const ready = checks.every((check) => check.status === "ok") && isHostedConfigured(config);
+  const origin = publicOrigin.status === "ok" ? publicOrigin.detail : undefined;
+  return {
+    ready,
+    checks,
+    ...(origin ? { mcpUrl: `${origin}/mcp`, oidcCallbackUri: `${origin}/oauth/callback` } : {}),
+  };
+}
+
+export function formatReport(report: PreflightReport): string {
+  const width = Math.max(...report.checks.map((check) => check.setting.length));
+  const lines = report.checks.map((check) => `${check.status.padEnd(7)} ${check.setting.padEnd(width)}  ${check.detail}`);
+  if (report.oidcCallbackUri) lines.push("", `Register this OIDC redirect URI: ${report.oidcCallbackUri}`, `Connector MCP URL:              ${report.mcpUrl}`);
+  lines.push("", report.ready ? "Preflight passed. Activation settings are complete; deployment still needs owner approval." : "Preflight failed. Fix the settings above before activation.");
+  return lines.join("\n");
+}
+
+type DiscoveryResult = Readonly<{ ok: boolean; detail: string }>;
+
+/** Optional online check of the issuer's public discovery document; sends no credentials. */
+export async function checkDiscovery(issuer: string, request: typeof fetch = fetch): Promise<DiscoveryResult> {
+  const base = new URL(issuer);
+  const url = new URL(`${base.pathname.replace(/\/$/, "")}/.well-known/openid-configuration`, base.origin);
+  try {
+    const response = await request(url, { redirect: "error", signal: AbortSignal.timeout(10_000), headers: { Accept: "application/json" } });
+    if (!response.ok) return { ok: false, detail: `discovery returned HTTP ${response.status}` };
+    const metadata = await response.json() as Record<string, unknown>;
+    if (metadata.issuer !== issuer && metadata.issuer !== issuer.replace(/\/$/, "")) return { ok: false, detail: "discovery issuer does not match OIDC_ISSUER" };
+    if (!Array.isArray(metadata.code_challenge_methods_supported) || !metadata.code_challenge_methods_supported.includes("S256")) return { ok: false, detail: "provider does not advertise PKCE S256" };
+    const responseTypes = metadata.response_types_supported;
+    if (!Array.isArray(responseTypes) || !responseTypes.includes("code")) return { ok: false, detail: "provider does not support the authorization code flow" };
+    return { ok: true, detail: "discovery document advertises the code flow and PKCE S256" };
+  } catch {
+    return { ok: false, detail: "discovery document could not be fetched or parsed" };
+  }
+}
+
+if (basename(process.argv[1] ?? "") === "preflight.js" || basename(process.argv[1] ?? "") === "preflight.ts") {
+  const report = runPreflight();
+  console.log(formatReport(report));
+  let ok = report.ready;
+  if (process.argv.includes("--discover")) {
+    const issuer = readRuntimeConfig().oidcIssuer;
+    const result = issuer ? await checkDiscovery(issuer) : { ok: false, detail: "OIDC_ISSUER is not valid" };
+    console.log(`${result.ok ? "ok     " : "invalid"} OIDC discovery  ${result.detail}`);
+    ok &&= result.ok;
+  }
+  process.exitCode = ok ? 0 : 1;
+}
