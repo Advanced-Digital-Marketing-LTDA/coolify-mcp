@@ -22,21 +22,33 @@ LOCAL_ADDRESSES.addAddress("::", "ipv6");
 LOCAL_ADDRESSES.addSubnet("::ffff:127.0.0.0", 104, "ipv6");
 for (const net of ["192.0.2.0", "198.51.100.0", "203.0.113.0"]) LOCAL_ADDRESSES.addSubnet(net, 24, "ipv4");
 LOCAL_ADDRESSES.addSubnet("2001:db8::", 32, "ipv6");
+// Private, shared (CGNAT), link-local and unique-local addresses can still be a
+// valid internal Coolify origin, but never the public connector origin.
+const PRIVATE_ADDRESSES = new BlockList();
+for (const [net, prefix] of [["10.0.0.0", 8], ["172.16.0.0", 12], ["192.168.0.0", 16], ["169.254.0.0", 16], ["100.64.0.0", 10]] as const) {
+  PRIVATE_ADDRESSES.addSubnet(net, prefix, "ipv4");
+  PRIVATE_ADDRESSES.addSubnet(`::ffff:${net}`, 96 + prefix, "ipv6");
+}
+PRIVATE_ADDRESSES.addSubnet("fc00::", 7, "ipv6");
+PRIVATE_ADDRESSES.addSubnet("fe80::", 10, "ipv6");
 
-function isReservedHost(origin: string): boolean {
+function isReservedHost(origin: string, publicOnly = false): boolean {
   // A fully qualified name may end in a root dot; it names the same host.
   const host = new URL(origin).hostname.toLowerCase().replace(/\.$/, "");
   const address = host.replace(/^\[|\]$/g, "");
   const version = isIP(address);
-  if (version) return LOCAL_ADDRESSES.check(address, version === 4 ? "ipv4" : "ipv6");
+  if (version) {
+    const family = version === 4 ? "ipv4" : "ipv6";
+    return LOCAL_ADDRESSES.check(address, family) || (publicOnly && PRIVATE_ADDRESSES.check(address, family));
+  }
   return RESERVED_NAMES.some((name) => host === name || host.endsWith(`.${name}`));
 }
 
-function originCheck(setting: string, value: string | undefined): Check {
+function originCheck(setting: string, value: string | undefined, publicOnly = false): Check {
   if (!value?.trim()) return { setting, status: "missing", detail: "set an HTTPS origin" };
   if (!isSafeCoolifyOrigin(value)) return { setting, status: "invalid", detail: "must be https://host with no path, query, credentials or port" };
   const origin = new URL(value).origin;
-  if (isReservedHost(origin)) return { setting, status: "invalid", detail: "reserved example or local hostname" };
+  if (isReservedHost(origin, publicOnly)) return { setting, status: "invalid", detail: publicOnly ? "reserved, local or private address; must be reachable from the internet" : "reserved example or local hostname" };
   return { setting, status: "ok", detail: origin };
 }
 
@@ -52,7 +64,7 @@ function hiddenCheck(setting: string, value: string | undefined, valid = (_v: st
  * settings and derived public URLs; secret values are never echoed.
  */
 export function runPreflight(env: NodeJS.ProcessEnv = process.env): PreflightReport {
-  const publicOrigin = originCheck("MCP_PUBLIC_ORIGIN", env.MCP_PUBLIC_ORIGIN);
+  const publicOrigin = originCheck("MCP_PUBLIC_ORIGIN", env.MCP_PUBLIC_ORIGIN, true);
   const issuer = env.OIDC_ISSUER?.trim();
   const config = readRuntimeConfig(env);
   const uuid = env.COOLIFY_TARGET_SERVER_UUID?.trim();
