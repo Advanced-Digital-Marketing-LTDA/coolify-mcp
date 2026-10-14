@@ -48,14 +48,16 @@ async function login(subject) {
   return response.json();
 }
 
-export async function check() {
+export async function check(signal) {
   let ready = false;
   for (let attempt = 0; attempt < 100; attempt++) {
+    signal?.throwIfAborted();
     try { ready = (await request("/healthz", { headers: { Host: "127.0.0.1:3000" } })).status === 200; } catch {}
     if (ready) break;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   assert.ok(ready, "Built host did not become ready");
+  signal?.throwIfAborted();
   assert.deepEqual(await (await request("/healthz")).json(), { status: "ok" });
   assert.equal(spawnSync(process.execPath, ["docker/healthcheck.mjs"], { env: { PORT: "3000" } }).status, 0);
   assert.equal((await request("/healthz", { headers: { Host: "attacker.example.test", "X-Forwarded-Host": "mcp.example.test" } })).status, 403);

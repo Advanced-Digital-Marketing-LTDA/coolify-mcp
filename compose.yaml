@@ -19,6 +19,8 @@ services:
     environment:
       PORT: "3000"
       MCP_PUBLIC_ORIGIN: ${MCP_PUBLIC_ORIGIN:?Set the final HTTPS MCP origin}
+      # Use the ingress peer as seen inside the container, not the host's loopback IP.
+      # Host-local published-port traffic may arrive from the Docker bridge gateway.
       MCP_TRUSTED_PROXY_CIDRS: ${MCP_TRUSTED_PROXY_CIDRS:?Set actual ingress IPs/CIDRs}
       COOLIFY_ORIGIN: ${COOLIFY_ORIGIN:?Set the confirmed HTTPS Coolify origin}
       COOLIFY_TARGET_SERVER_NAME: ${COOLIFY_TARGET_SERVER_NAME:?Set the approved server name}

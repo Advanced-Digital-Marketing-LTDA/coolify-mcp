@@ -9,7 +9,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 docker build --tag "$image" .
 # No live configuration, published ports or external network. Only test fixtures are mounted.
-container=$(docker run -d --network none --read-only --cap-drop ALL \
+container=$(docker run -d --init --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 128 --memory 512m --cpus 1 \
   --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   --mount "type=bind,src=$(pwd)/test/smoke,dst=/app/test/smoke,readonly" \
@@ -32,7 +32,7 @@ test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = 0
 docker rm "$container" >/dev/null
 container=
 # The unmodified image must fail closed without owner activation settings.
-container=$(docker create --network none --read-only --cap-drop ALL \
+container=$(docker create --init --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true "$image")
 if docker start -a "$container"; then
   :
