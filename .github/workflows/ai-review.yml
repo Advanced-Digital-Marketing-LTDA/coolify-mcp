@@ -45,7 +45,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-      id-token: write
     env:
       HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     steps:
@@ -55,10 +54,12 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - if: env.HAS_KEY == 'true'
         uses: anthropics/claude-code-action@a26b07d8c778b0c43f64618e5fd29fd0f8af72e8 # v1.0.250
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
           plugin_marketplaces: https://github.com/anthropics/claude-code.git
           plugins: pr-review-toolkit@claude-code-plugins
           prompt: |
