@@ -7,9 +7,19 @@ Both clients connect to the same bridge with the **Connector MCP URL** the prefl
 | Client | Callback the bridge accepts | Where to add it |
 | --- | --- | --- |
 | ChatGPT | `https://chatgpt.com/connector/oauth/<id>` | Add the connector in the ChatGPT workspace and have a workspace admin approve it. |
-| Claude (web, Desktop, mobile, Cowork) | `https://claude.ai/api/mcp/auth_callback` | Add a custom connector with the MCP URL and leave the OAuth client ID and secret blank. |
+| Claude (web, Desktop, mobile, Cowork) | `https://claude.ai/api/mcp/auth_callback` | Install the Claude plugin below, or add a custom connector with the MCP URL and leave the OAuth client ID and secret blank. |
 
 Claude Code uses a loopback callback and is refused by design. If a firewall or WAF sits in front of the MCP host or the OIDC provider, allow Claude's egress range `160.79.104.0/21` ([source](https://claude.com/docs/connectors/building/authentication#network-reference)).
+
+## Claude plugin
+
+The `plugin/` folder is a Claude plugin that bundles the connector with a `coolify-operations` skill telling Claude to stay on the AI Agents server, look up UUIDs before acting, and leave the typed confirmations to the owner. Claude's hosted apps ignore a templated connector URL, so the URL is fixed when the plugin is built:
+
+```sh
+MCP_PUBLIC_ORIGIN=https://<your-mcp-host> npm run plugin
+```
+
+The build applies the same origin rules as the preflight and writes `dist/claude-plugin/coolify-ai-agents/` and `coolify-ai-agents.zip`. The plugin contains no credentials. In Claude, open Customize > Plugins, choose Add > Upload plugin, select the zip, then connect `coolify` from the plugin's Connectors tab and sign in as the owner. The plugin is meant for Claude's hosted apps; installing it in Claude Code is refused at sign-in like any loopback client.
 
 ## Acceptance checks
 
