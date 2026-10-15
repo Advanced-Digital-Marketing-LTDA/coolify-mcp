@@ -36,7 +36,12 @@ if (basename(process.argv[1] ?? "") === "plugin-build.js" || basename(process.ar
     const { dir, mcpUrl } = buildPlugin(process.env.MCP_PUBLIC_ORIGIN, outRoot);
     const zip = join(outRoot, `${PLUGIN_NAME}.zip`);
     rmSync(zip, { force: true });
-    execFileSync("zip", ["-qr", zip, "."], { cwd: dir });
+    try {
+      execFileSync("zip", ["-qr", zip, "."], { cwd: dir });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`The zip command is not installed. Zip the contents of ${dir} by hand, or install zip and rerun.`);
+      throw error;
+    }
     console.log(`Plugin folder: ${dir}\nUpload file:   ${zip}\nConnector URL: ${mcpUrl}`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
