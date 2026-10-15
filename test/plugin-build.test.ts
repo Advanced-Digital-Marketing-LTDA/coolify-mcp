@@ -1,8 +1,9 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inflateRawSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildPlugin, PLUGIN_NAME, TEMPLATE_DIR } from "../src/plugin-build.js";
+import { buildPlugin, PLUGIN_NAME, TEMPLATE_DIR, zipDirectory } from "../src/plugin-build.js";
 
 const roots: string[] = [];
 const outRoot = () => {
@@ -29,6 +30,23 @@ describe("Claude plugin build", () => {
     const root = outRoot();
     expect(() => buildPlugin(origin, root)).toThrow(/MCP_PUBLIC_ORIGIN/);
     expect(readdirSync(root)).toEqual([]);
+  });
+
+  it("zips every plugin file with relative names and intact contents", () => {
+    const { dir } = buildPlugin("https://mcp.bridge-owner.dev", outRoot());
+    const zip = zipDirectory(dir);
+    const files = new Map<string, string>();
+    for (let at = 0; zip.readUInt32LE(at) === 0x04034b50;) {
+      const size = zip.readUInt32LE(at + 18);
+      const nameLength = zip.readUInt16LE(at + 26);
+      const name = zip.subarray(at + 30, at + 30 + nameLength).toString();
+      const start = at + 30 + nameLength;
+      files.set(name, inflateRawSync(zip.subarray(start, start + size)).toString());
+      at = start + size;
+    }
+    expect([...files.keys()]).toEqual([".claude-plugin/plugin.json", ".mcp.json", "skills/coolify-operations/SKILL.md"]);
+    expect(files.get(".mcp.json")).toBe(readFileSync(join(dir, ".mcp.json"), "utf8"));
+    expect(zip.readUInt16LE(zip.length - 12)).toBe(3);
   });
 
   it("keeps credentials and templated URLs out of the template", () => {
