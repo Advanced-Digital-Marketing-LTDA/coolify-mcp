@@ -11,16 +11,16 @@ concurrency:
 permissions:
   contents: read
 
-# Both jobs need the ANTHROPIC_API_KEY repository secret. Without it (or on a
+# Both jobs need the CLAUDE_CODE_OAUTH_TOKEN repository secret. Without it (or on a
 # fork PR, which gets no secrets) they skip with a notice instead of failing.
 jobs:
   adversarial-review:
     runs-on: ubuntu-latest
     env:
-      HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+      HAS_KEY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
       - if: env.HAS_KEY != 'true'
-        run: echo "::notice::ANTHROPIC_API_KEY is not set; skipping adversarial-review."
+        run: echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set; skipping adversarial-review."
       - if: env.HAS_KEY == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -31,13 +31,16 @@ jobs:
         with:
           node-version: 22
       - if: env.HAS_KEY == 'true'
+        name: Install the claude CLI
+        run: npm install -g @anthropic-ai/claude-code@2.1.301
+      - if: env.HAS_KEY == 'true'
         name: adversarial-review --passes 2 --verify
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -o pipefail
-          npx --yes adversarial-review@2.11.1 --provider anthropic --base "origin/$BASE_REF" \
+          npx --yes adversarial-review@2.11.1 --provider claude --base "origin/$BASE_REF" \
             --passes 2 --verify --fail-on-empty | tee -a "$GITHUB_STEP_SUMMARY"
 
   pr-review-toolkit:
@@ -46,10 +49,10 @@ jobs:
       contents: read
       pull-requests: write
     env:
-      HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+      HAS_KEY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
       - if: env.HAS_KEY != 'true'
-        run: echo "::notice::ANTHROPIC_API_KEY is not set; skipping PR Review Toolkit."
+        run: echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set; skipping PR Review Toolkit."
       - if: env.HAS_KEY == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -58,7 +61,7 @@ jobs:
       - if: env.HAS_KEY == 'true'
         uses: anthropics/claude-code-action@a26b07d8c778b0c43f64618e5fd29fd0f8af72e8 # v1.0.250
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
           plugin_marketplaces: https://github.com/anthropics/claude-code.git
           plugins: pr-review-toolkit@claude-code-plugins
