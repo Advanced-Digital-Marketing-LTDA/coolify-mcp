@@ -78,8 +78,10 @@ export function zipDirectory(root: string): Buffer {
 if (basename(process.argv[1] ?? "") === "plugin-build.js" || basename(process.argv[1] ?? "") === "plugin-build.ts") {
   try {
     const outRoot = resolve("dist/claude-plugin");
-    const { dir, mcpUrl } = buildPlugin(process.env.MCP_PUBLIC_ORIGIN, outRoot);
     const zip = join(outRoot, `${PLUGIN_NAME}.zip`);
+    // A failed rebuild must not leave an older archive at the upload path.
+    rmSync(zip, { force: true });
+    const { dir, mcpUrl } = buildPlugin(process.env.MCP_PUBLIC_ORIGIN, outRoot);
     writeFileSync(zip, zipDirectory(dir));
     console.log(`Plugin folder: ${dir}\nUpload file:   ${zip}\nConnector URL: ${mcpUrl}`);
   } catch (error) {
