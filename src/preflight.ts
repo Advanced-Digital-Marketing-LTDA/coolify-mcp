@@ -67,6 +67,11 @@ function originCheck(setting: string, value: string | undefined, publicOnly = fa
   return { setting, status: "ok", detail: origin };
 }
 
+/** Checks a connector origin with the same rules the preflight applies to MCP_PUBLIC_ORIGIN. */
+export function checkPublicOrigin(value: string | undefined): Check {
+  return originCheck("MCP_PUBLIC_ORIGIN", value, true);
+}
+
 // Secrets and the owner subject are only ever reported as present or absent.
 function hiddenCheck(setting: string, value: string | undefined, valid = (_v: string) => true, rule = ""): Check {
   if (!value?.trim()) return { setting, status: "missing", detail: "inject through the host secret manager" };
@@ -103,7 +108,7 @@ function proxyCheck(value: string | undefined): Check {
  * settings and derived public URLs; secret values are never echoed.
  */
 export function runPreflight(env: NodeJS.ProcessEnv = process.env): PreflightReport {
-  const publicOrigin = originCheck("MCP_PUBLIC_ORIGIN", env.MCP_PUBLIC_ORIGIN, true);
+  const publicOrigin = checkPublicOrigin(env.MCP_PUBLIC_ORIGIN);
   const issuer = env.OIDC_ISSUER?.trim();
   const config = readRuntimeConfig(env);
   const checks: Check[] = [

@@ -1,0 +1,8 @@
+{
+  "name": "coolify-ai-agents",
+  "version": "0.1.0",
+  "description": "Owner-only access to resources on the Coolify AI Agents server through the hosted Coolify MCP bridge.",
+  "author": { "name": "Andrew Weilbacher" },
+  "repository": "https://github.com/Bonobo791/coolify-mcp",
+  "keywords": ["coolify", "mcp", "deployments"]
+}

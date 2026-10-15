@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.2"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -15,7 +15,8 @@
     "smoke:docker": "sh test/smoke/docker.sh",
     "mutation": "stryker run",
     "ci": "npm run build && npm test && npm run mutation",
-    "preflight": "node dist/src/preflight.js"
+    "preflight": "node dist/src/preflight.js",
+    "plugin": "npm run build && node dist/src/plugin-build.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
