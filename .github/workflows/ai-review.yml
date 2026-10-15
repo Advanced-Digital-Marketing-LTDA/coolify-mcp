@@ -34,9 +34,12 @@ jobs:
         name: Install the claude CLI and adversarial-review
         # --ignore-scripts skips lifecycle scripts; the claude wrapper's postinstall only
         # links the native binary, so install that package and put it on PATH directly.
+        # Neither package has npm dependencies, so there is no transitive tree to lock.
         run: |
           npm install -g --ignore-scripts @anthropic-ai/claude-code-linux-x64@2.1.301 adversarial-review@2.11.1
-          echo "$(npm root -g)/@anthropic-ai/claude-code-linux-x64" >> "$GITHUB_PATH"
+          CLAUDE_DIR="$(npm root -g)/@anthropic-ai/claude-code-linux-x64"
+          "$CLAUDE_DIR/claude" --version
+          echo "$CLAUDE_DIR" >> "$GITHUB_PATH"
       - if: env.HAS_KEY == 'true'
         name: adversarial-review --passes 2 --verify
         env:
