@@ -1,0 +1,40 @@
+name: Ratchets
+
+on:
+  pull_request:
+
+concurrency:
+  group: ratchets-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Baselines are the counts on main when these gates were added; they block new
+# skipped/focused tests, lint suppressions and `any`s, never existing ones.
+jobs:
+  ratchets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: test-ratchet
+        uses: motchalini-llc/test-ratchet@4a8768340fc543b13542e56441b69b5532eb98f0 # v1.0.2
+        with:
+          language: typescript
+          paths: src test
+          baseline-skip: "0"
+      - name: suppress-ratchet
+        uses: motchalini-llc/suppress-ratchet@3e171b421498a8a41dae883841af3d6899c7a5a3 # v1.0.2
+        with:
+          language: typescript
+          paths: src test
+          baseline-suppress: "0"
+      - name: type-ratchet
+        uses: motchalini-llc/type-ratchet@0988c85eeb214c6f640ab20d7116543362d14c89 # v1.1.3
+        with:
+          language: typescript
+          paths: src
+          baseline-any: "1"
+          baseline-suppress: "0"
