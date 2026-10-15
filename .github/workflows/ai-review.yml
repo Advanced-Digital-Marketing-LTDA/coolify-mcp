@@ -31,8 +31,12 @@ jobs:
         with:
           node-version: 22
       - if: env.HAS_KEY == 'true'
-        name: Install the claude CLI
-        run: npm install -g @anthropic-ai/claude-code@2.1.301
+        name: Install the claude CLI and adversarial-review
+        # --ignore-scripts skips lifecycle scripts; the claude wrapper's postinstall only
+        # links the native binary, so install that package and put it on PATH directly.
+        run: |
+          npm install -g --ignore-scripts @anthropic-ai/claude-code-linux-x64@2.1.301 adversarial-review@2.11.1
+          echo "$(npm root -g)/@anthropic-ai/claude-code-linux-x64" >> "$GITHUB_PATH"
       - if: env.HAS_KEY == 'true'
         name: adversarial-review --passes 2 --verify
         env:
@@ -40,7 +44,7 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -o pipefail
-          npx --yes adversarial-review@2.11.1 --provider claude --base "origin/$BASE_REF" \
+          adversarial-review --provider claude --base "origin/$BASE_REF" \
             --passes 2 --verify --fail-on-empty | tee -a "$GITHUB_STEP_SUMMARY"
 
   pr-review-toolkit:
@@ -73,4 +77,4 @@ jobs:
             the output of `gh pr diff`. Post specific issues as inline comments and
             one summary comment with the findings.
           claude_args: |
-            --allowedTools "Skill,Task,Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*)"
+            --allowedTools "Skill(pr-review-toolkit:review-pr),Task,Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*)"
