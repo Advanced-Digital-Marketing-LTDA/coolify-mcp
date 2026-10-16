@@ -1,0 +1,12 @@
+name: Dependency review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    # Langlo main, merge of PR 42
+    uses: Advanced-Digital-Marketing-LTDA/Langlo/.github/workflows/reusable-dependency-review.yml@9a946fb019ef1108cd461c1682cd4515a0244683
