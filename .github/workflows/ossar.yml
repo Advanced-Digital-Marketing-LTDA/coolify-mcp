@@ -1,0 +1,21 @@
+name: OSSAR
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+    branches: ['main']
+  schedule:
+    - cron: '32 23 * * 5'
+
+permissions:
+  contents: read
+
+jobs:
+  OSSAR-Scan:
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    # Langlo main, merge of PR 42
+    uses: Advanced-Digital-Marketing-LTDA/Langlo/.github/workflows/reusable-ossar.yml@9a946fb019ef1108cd461c1682cd4515a0244683
