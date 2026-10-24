@@ -20,13 +20,23 @@ jobs:
       security-events: write
       actions: read
     runs-on: windows-latest
-    env:
-      # Guardian's supported override replaces only ESLint's configuration file.
-      GDN_ESLINT_CONFIGURATIONFILE: ${{ github.workspace }}/.github/ossar-eslint.config.mjs
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2; original OSSAR checkout
         with:
+          persist-credentials: false
+
+      - name: Checkout reviewed security configuration
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: Advanced-Digital-Marketing-LTDA/coolify-mcp
+          # Security rules and dependency resolution must not come from the PR under review.
+          ref: a4b81f3a19a37e0b765e23e2f9a19669de7fafb7
+          path: .ossar-security-trusted
+          sparse-checkout: |
+            .github/ossar-eslint.config.mjs
+            .github/ossar-tools/
+          sparse-checkout-cone-mode: false
           persist-credentials: false
 
       - name: Set up Node for the security parser
@@ -39,10 +49,15 @@ jobs:
         shell: pwsh
         run: |
           $ossarToolRoot = Join-Path $env:RUNNER_TEMP "ossar-eslint"
+          $trustedRoot = Join-Path $env:GITHUB_WORKSPACE ".ossar-security-trusted/.github"
           New-Item -ItemType Directory -Force -Path $ossarToolRoot | Out-Null
-          npm install --ignore-scripts --no-save --prefix "$ossarToolRoot" --registry https://registry.npmjs.org eslint@9.39.2 @microsoft/eslint-plugin-sdl@1.0.1 @typescript-eslint/parser@8.72.0 typescript@5.9.3
+          Copy-Item -LiteralPath (Join-Path $trustedRoot "ossar-tools/package.json") -Destination $ossarToolRoot
+          Copy-Item -LiteralPath (Join-Path $trustedRoot "ossar-tools/package-lock.json") -Destination $ossarToolRoot
+          Copy-Item -LiteralPath (Join-Path $trustedRoot "ossar-eslint.config.mjs") -Destination $ossarToolRoot
+          npm ci --ignore-scripts --prefix "$ossarToolRoot" --registry https://registry.npmjs.org
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "SECURITY_LINT_ROOT=$ossarToolRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "GDN_ESLINT_CONFIGURATIONFILE=$(Join-Path $ossarToolRoot 'ossar-eslint.config.mjs')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # Keep the original OSSAR policy and automatic applicability for every tool.
       - name: Run OSSAR
