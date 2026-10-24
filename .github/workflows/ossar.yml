@@ -40,6 +40,28 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
+      - name: Require reviewed security assets to match the proposed files
+        shell: pwsh
+        run: |
+          $assetPaths = @(
+            ".github/ossar-eslint.config.mjs",
+            ".github/ossar-tools/package.json",
+            ".github/ossar-tools/package-lock.json"
+          )
+          foreach ($assetPath in $assetPaths) {
+            $candidateAsset = Join-Path $env:GITHUB_WORKSPACE $assetPath
+            $reviewedAsset = Join-Path (Join-Path $env:GITHUB_WORKSPACE ".ossar-security-trusted") $assetPath
+            if (-not (Test-Path -LiteralPath $candidateAsset -PathType Leaf) -or
+                -not (Test-Path -LiteralPath $reviewedAsset -PathType Leaf)) {
+              throw "Required security asset is missing: $assetPath"
+            }
+            $candidateHash = (Get-FileHash -LiteralPath $candidateAsset -Algorithm SHA256).Hash
+            $reviewedHash = (Get-FileHash -LiteralPath $reviewedAsset -Algorithm SHA256).Hash
+            if ($candidateHash -ne $reviewedHash) {
+              throw "Security asset differs from the reviewed pin; review and update the immutable asset commit: $assetPath"
+            }
+          }
+
       - name: Set up Node for the security parser
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
