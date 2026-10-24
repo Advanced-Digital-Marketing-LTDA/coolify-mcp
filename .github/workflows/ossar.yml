@@ -21,7 +21,6 @@ jobs:
       actions: read
     runs-on: windows-latest
     env:
-      SECURITY_LINT_ROOT: ${{ runner.temp }}/ossar-eslint
       # Guardian's supported override replaces only ESLint's configuration file.
       GDN_ESLINT_CONFIGURATIONFILE: ${{ github.workspace }}/.github/ossar-eslint.config.mjs
     steps:
@@ -39,8 +38,11 @@ jobs:
       - name: Install isolated security configuration dependencies
         shell: pwsh
         run: |
-          npm install --ignore-scripts --no-save --prefix "$env:SECURITY_LINT_ROOT" --registry https://registry.npmjs.org eslint@9.39.2 @microsoft/eslint-plugin-sdl@1.0.1 @typescript-eslint/parser@8.72.0 typescript@5.9.3
+          $ossarToolRoot = Join-Path $env:RUNNER_TEMP "ossar-eslint"
+          New-Item -ItemType Directory -Force -Path $ossarToolRoot | Out-Null
+          npm install --ignore-scripts --no-save --prefix "$ossarToolRoot" --registry https://registry.npmjs.org eslint@9.39.2 @microsoft/eslint-plugin-sdl@1.0.1 @typescript-eslint/parser@8.72.0 typescript@5.9.3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "SECURITY_LINT_ROOT=$ossarToolRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # Keep the original OSSAR policy and automatic applicability for every tool.
       - name: Run OSSAR
