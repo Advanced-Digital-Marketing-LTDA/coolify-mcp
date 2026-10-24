@@ -6,7 +6,7 @@ on:
 
 jobs:
   rewardguard:
-    uses: Advanced-Digital-Marketing-LTDA/workflows/.github/workflows/rewardguard.yml@65be5c963ee7ff9de3a27108a16a8d7c4fb4c7a2 # complete PR context and merge-base coverage
+    uses: Advanced-Digital-Marketing-LTDA/workflows/.github/workflows/rewardguard.yml@91003c38da83d57499bef6698b81fa53fb9d6c18 # complete PR context and merge-base coverage
     permissions:
       contents: read
       pull-requests: write
