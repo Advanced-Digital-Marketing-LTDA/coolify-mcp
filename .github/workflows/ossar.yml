@@ -30,7 +30,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: Advanced-Digital-Marketing-LTDA/coolify-mcp
-          # Security rules and dependency resolution must not come from the PR under review.
+          # Load reviewed config and dependency bytes for this workflow revision.
+          # Workflow edits remain CI policy changes requiring owner review.
           ref: a4b81f3a19a37e0b765e23e2f9a19669de7fafb7
           path: .ossar-security-trusted
           sparse-checkout: |
