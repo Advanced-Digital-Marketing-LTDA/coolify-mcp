@@ -1,0 +1,12 @@
+{
+  "name": "coolify-ossar-security-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Isolated dependencies for OSSAR's required SDL security rules and TypeScript parser.",
+  "dependencies": {
+    "@microsoft/eslint-plugin-sdl": "1.0.1",
+    "@typescript-eslint/parser": "8.72.0",
+    "eslint": "9.39.2",
+    "typescript": "5.9.3"
+  }
+}

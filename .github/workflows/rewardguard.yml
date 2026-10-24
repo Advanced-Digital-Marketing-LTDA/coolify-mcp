@@ -1,0 +1,19 @@
+name: rewardguard
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  rewardguard:
+    uses: Advanced-Digital-Marketing-LTDA/workflows/.github/workflows/rewardguard.yml@c37cb313146cced88398b1a9c051b2098aba4076 # automatic evidence and individual content checks
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    with:
+      run-tests: false
+      node-version: '24'
+    secrets:
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

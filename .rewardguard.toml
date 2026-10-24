@@ -1,0 +1,13 @@
+# Read from the trusted base; proposed changes cannot alter their own review.
+run_tests = false
+
+[judge]
+model = "jev-1.13.0"
+
+[explainer]
+model = "claude-haiku-5-5"
+effort = "low"
+
+[content]
+enabled = true
+

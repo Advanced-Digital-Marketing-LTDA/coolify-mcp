@@ -13,9 +13,81 @@ permissions:
 
 jobs:
   OSSAR-Scan:
+    # Preserve the check name previously produced by the reusable workflow.
+    name: OSSAR-Scan / OSSAR-Scan
     permissions:
       contents: read
       security-events: write
       actions: read
-    # Langlo main, merge of PR 42
-    uses: Advanced-Digital-Marketing-LTDA/Langlo/.github/workflows/reusable-ossar.yml@9a946fb019ef1108cd461c1682cd4515a0244683
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2; original OSSAR checkout
+        with:
+          persist-credentials: false
+
+      - name: Checkout reviewed security configuration
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: Advanced-Digital-Marketing-LTDA/coolify-mcp
+          # Load reviewed config and dependency bytes for this workflow revision.
+          # Workflow edits remain CI policy changes requiring owner review.
+          ref: a4b81f3a19a37e0b765e23e2f9a19669de7fafb7
+          path: .ossar-security-trusted
+          sparse-checkout: |
+            .github/ossar-eslint.config.mjs
+            .github/ossar-tools/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Require reviewed security assets to match the proposed files
+        shell: pwsh
+        run: |
+          $assetPaths = @(
+            ".github/ossar-eslint.config.mjs",
+            ".github/ossar-tools/package.json",
+            ".github/ossar-tools/package-lock.json"
+          )
+          foreach ($assetPath in $assetPaths) {
+            $candidateAsset = Join-Path $env:GITHUB_WORKSPACE $assetPath
+            $reviewedAsset = Join-Path (Join-Path $env:GITHUB_WORKSPACE ".ossar-security-trusted") $assetPath
+            if (-not (Test-Path -LiteralPath $candidateAsset -PathType Leaf) -or
+                -not (Test-Path -LiteralPath $reviewedAsset -PathType Leaf)) {
+              throw "Required security asset is missing: $assetPath"
+            }
+            $candidateHash = (Get-FileHash -LiteralPath $candidateAsset -Algorithm SHA256).Hash
+            $reviewedHash = (Get-FileHash -LiteralPath $reviewedAsset -Algorithm SHA256).Hash
+            if ($candidateHash -ne $reviewedHash) {
+              throw "Security asset differs from the reviewed pin; review and update the immutable asset commit: $assetPath"
+            }
+          }
+
+      - name: Set up Node for the security parser
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.23.4'
+          package-manager-cache: false
+
+      - name: Install isolated security configuration dependencies
+        shell: pwsh
+        run: |
+          $ossarToolRoot = Join-Path $env:RUNNER_TEMP "ossar-eslint"
+          $trustedRoot = Join-Path $env:GITHUB_WORKSPACE ".ossar-security-trusted/.github"
+          New-Item -ItemType Directory -Force -Path $ossarToolRoot | Out-Null
+          Copy-Item -LiteralPath (Join-Path $trustedRoot "ossar-tools/package.json") -Destination $ossarToolRoot
+          Copy-Item -LiteralPath (Join-Path $trustedRoot "ossar-tools/package-lock.json") -Destination $ossarToolRoot
+          Copy-Item -LiteralPath (Join-Path $trustedRoot "ossar-eslint.config.mjs") -Destination $ossarToolRoot
+          npm ci --ignore-scripts --prefix "$ossarToolRoot" --registry https://registry.npmjs.org
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "SECURITY_LINT_ROOT=$ossarToolRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "GDN_ESLINT_CONFIGURATIONFILE=$(Join-Path $ossarToolRoot 'ossar-eslint.config.mjs')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # Keep the original OSSAR policy and automatic applicability for every tool.
+      - name: Run OSSAR
+        uses: github/ossar-action@786a16a90ba92b4ae6228fe7382fb16ef5c51000 # v1, resolved from the failed run
+        id: ossar
+
+      - name: Upload OSSAR results
+        uses: github/codeql-action/upload-sarif@4bfa242aa49c5f7c6770b98670d354a7dfac05f8 # v3, resolved from the failed run
+        with:
+          sarif_file: ${{ steps.ossar.outputs.sarifFile }}
