@@ -6,7 +6,7 @@ on:
 
 jobs:
   rewardguard:
-    uses: Advanced-Digital-Marketing-LTDA/workflows/.github/workflows/rewardguard.yml@00bea39125f707474ca6d199d7e6c9ea5c907804 # filter internal documentation from content review
+    uses: Advanced-Digital-Marketing-LTDA/workflows/.github/workflows/rewardguard.yml@91003c38da83d57499bef6698b81fa53fb9d6c18 # complete PR context and merge-base coverage
     permissions:
       contents: read
       pull-requests: write
